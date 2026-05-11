@@ -7,6 +7,7 @@ opencv-python==4.10.0.84
 einops==0.7.0
 # pytorch-lightning==1.9.0
 bitsandbytes
+peft>=0.17.0
 lion-pytorch==0.2.3
 schedulefree==1.4
 pytorch-optimizer==3.10.0
@@ -45,5 +46,9 @@ numpy
 rich==14.1.0
 # for T5XXL tokenizer (SD3/FLUX)
 sentencepiece==0.2.1
+# Forge web UI
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+psutil>=6.0.0
 # for kohya_ss library
 -e .

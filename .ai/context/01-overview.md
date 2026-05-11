@@ -53,6 +53,14 @@ Dataset configuration uses TOML files with structured validation:
 
 ## Common Development Commands
 
+### Web UI (Forge)
+A browser-based training interface is available:
+```bash
+python forge.py           # start at http://localhost:28471
+python forge.py --port 8080 --reload  # custom port, dev auto-reload
+```
+Server config is in `forge_config.json` (created automatically on first run).
+
 ### Training Commands Pattern
 All training scripts follow this general pattern:
 ```bash
@@ -72,10 +80,48 @@ For low VRAM environments, use block swapping:
 ```
 
 ### Utility Scripts
-Located in `tools/` directory:
-- `tools/merge_lora.py`: Merge LoRA weights into base models
+- `networks/merge_lora.py`, `networks/flux_merge_lora.py`: Merge LoRA adapters (SD/SDXL and FLUX variants)
+- `networks/resize_lora.py`: Resize LoRA rank
+- `networks/extract_lora_from_models.py`, `networks/flux_extract_lora.py`: Extract LoRA from model diff
+- `tools/merge_models.py`: Full model merging
 - `tools/cache_latents.py`: Pre-cache VAE latents for faster training
 - `tools/cache_text_encoder_outputs.py`: Pre-cache text encoder outputs
+
+## Forge Web UI Architecture
+
+The web UI is a FastAPI server (`forge_server/`) that wraps the CLI training scripts:
+
+- **`forge.py`**: Entry point — runs uvicorn
+- **`forge_server/main.py`**: FastAPI app, lifespan (job queue + GPU stats push)
+- **`forge_server/schemas.py`**: `TrainingConfig` Pydantic model covering all training parameters
+- **`forge_server/command_builder.py`**: Maps `TrainingConfig` → `accelerate launch` argv. `SCRIPT_MAP` dict controls the `(architecture, mode) → script` routing. **Update this when adding new model support.**
+- **`forge_server/job_store.py`**: In-memory job store with `forge_jobs.json` persistence
+- **`forge_server/job_runner.py`**: Async subprocess runner, tqdm parsing, Windows process-tree kill
+- **`forge_server/routes/`**: REST API + WebSocket `/ws`
+  - `jobs.py` — `/api/jobs` CRUD + queue management
+  - `cli.py` — `/api/cli-preview` (dry-run argv preview)
+  - `files.py` — `/api/models`, `/api/loras`, `/api/datasets` (filesystem scanning)
+  - `system.py` — `/api/system/stats` (GPU via nvidia-smi, disk usage)
+  - `settings_route.py` — `/api/settings` GET/POST (reads/writes `forge_config.json`)
+  - `utilities.py` — `/api/utilities/run` (one-shot subprocess runner for merge/resize/extract scripts); `/api/utilities/tools` lists available tools
+  - `ws.py` — WebSocket `/ws` with `ConnectionManager`; broadcasts `queue_update` and `system_stats` events
+- **`forge.css`** / **`forge.js`**: SPA frontend (no build step, vanilla JS + custom CSS)
+- **`forge_config.json`**: User-editable server config (`sd_scripts_root`, `python_executable`, `models_dir`, `datasets_dir`, `output_dir`, `server_host`, `server_port`, `cpu_threads`, `default_mixed_precision`)
+
+### Adding a New Model to the Web UI
+When a new model family is added to sd-scripts, also update:
+1. `forge_server/command_builder.py` — add entries to `SCRIPT_MAP` for the new `(arch, mode)` combinations
+2. `forge_server/schemas.py` — add any model-specific fields to `TrainingConfig`
+3. `Forge.html` — add the architecture pill to the arch-strip in the Basics tab
+
+### Forge Frontend SPA Conventions
+- Page templates live as `<template id="tpl-{page}">` elements; the JS router clones them into `#page` on navigation.
+- Each page has a corresponding `mount{Page}()` function registered in `pageControllers` in `forge.js`.
+- `sock.on(type, handler)` stores **one handler per type** — a second call with the same type overwrites the first. Keep global WebSocket handlers (e.g. `system_stats` for the sidebar GPU meter) in one place.
+- `collectFormState()` reads the train form into a `TrainingConfig`-shaped object; always update it when adding new form fields.
+- `_pendingEdit` (module-level) passes a job config from the Jobs page → `mountTrain()` for pre-population.
+- Utility scripts are invoked via `POST /api/utilities/run` with `{tool, args}` — no job queue; result returned inline.
+- User presets are stored in `localStorage` under key `forge_presets` (object keyed by preset name).
 
 ## Development Notes
 
