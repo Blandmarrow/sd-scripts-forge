@@ -96,11 +96,11 @@ The web UI is a FastAPI server (`forge_server/`) that wraps the CLI training scr
 - **`forge_server/schemas.py`**: `TrainingConfig` Pydantic model covering all training parameters
 - **`forge_server/command_builder.py`**: Maps `TrainingConfig` → `accelerate launch` argv. `SCRIPT_MAP` dict controls the `(architecture, mode) → script` routing. **Update this when adding new model support.**
 - **`forge_server/job_store.py`**: In-memory job store with `forge_jobs.json` persistence
-- **`forge_server/job_runner.py`**: Async subprocess runner, tqdm parsing, Windows process-tree kill
+- **`forge_server/job_runner.py`**: Async subprocess runner, tqdm parsing, Windows process-tree kill. Also handles pre-launch setup: `_prepare_sample_prompts()` writes inline `sample_prompts_text` to `{output_dir}/sample_prompts.txt` before the subprocess starts.
 - **`forge_server/routes/`**: REST API + WebSocket `/ws`
   - `jobs.py` — `/api/jobs` CRUD + queue management
   - `cli.py` — `/api/cli-preview` (dry-run argv preview)
-  - `files.py` — `/api/models`, `/api/loras`, `/api/datasets` (filesystem scanning)
+  - `files.py` — `/api/models`, `/api/loras`, `/api/datasets` (filesystem scanning). Dataset scanner detects sd-scripts roots recursively: a directory is a dataset root if it contains `{N}_{name}` repeat-named subdirectories.
   - `system.py` — `/api/system/stats` (GPU via nvidia-smi, disk usage)
   - `settings_route.py` — `/api/settings` GET/POST (reads/writes `forge_config.json`)
   - `utilities.py` — `/api/utilities/run` (one-shot subprocess runner for merge/resize/extract scripts); `/api/utilities/tools` lists available tools
@@ -110,9 +110,14 @@ The web UI is a FastAPI server (`forge_server/`) that wraps the CLI training scr
 
 ### Adding a New Model to the Web UI
 When a new model family is added to sd-scripts, also update:
-1. `forge_server/command_builder.py` — add entries to `SCRIPT_MAP` for the new `(arch, mode)` combinations
+1. `forge_server/command_builder.py` — add entries to `SCRIPT_MAP` for the new `(arch, mode)` combinations; add an `elif cfg.architecture == "<arch>":` block for any model-specific CLI flags (see the `anima` block as an example)
 2. `forge_server/schemas.py` — add any model-specific fields to `TrainingConfig`
-3. `Forge.html` — add the architecture pill to the arch-strip in the Basics tab
+3. `Forge.html` — add the architecture pill to the arch-strip in the Basics tab; add a hidden `<div id="{arch}-extras">` for model-specific inputs if needed
+4. `forge.js` — show/hide the extras div in `updateArchExtras()`; collect the new fields in `collectFormState()`; restore them in `_applyConfigToForm()`
+
+**Model-specific network modules**: if a model requires a non-default LoRA module (e.g. Anima uses `networks.lora_anima` instead of `networks.lora`), override it in both `collectFormState()` and the `command_builder.py` network block to prevent "empty parameter list" errors.
+
+**accelerate invocation**: `_accelerate_launch_base()` in `command_builder.py` resolves the accelerate executable — it prefers `accelerate.exe` from the venv's `Scripts/` directory and falls back to `python -m accelerate.commands.launch` (no extra `launch` token). `forge_config.json` `python_executable` must point to the venv Python, not the system Python.
 
 ### Forge Frontend SPA Conventions
 - Page templates live as `<template id="tpl-{page}">` elements; the JS router clones them into `#page` on navigation.
@@ -122,6 +127,7 @@ When a new model family is added to sd-scripts, also update:
 - `_pendingEdit` (module-level) passes a job config from the Jobs page → `mountTrain()` for pre-population.
 - Utility scripts are invoked via `POST /api/utilities/run` with `{tool, args}` — no job queue; result returned inline.
 - User presets are stored in `localStorage` under key `forge_presets` (object keyed by preset name).
+- **Sample prompts**: users type prompts inline in `#sample-prompts-textarea` (one per line). Width/height/steps/guidance/negative inputs provide defaults that `collectFormState()` appends as `--w --h --s --l --n` directives. The combined text is sent as `sample_prompts_text`; `job_runner.py` writes it to a file. If the textarea is empty, `sample_every_n_steps` and `sample_every_n_epochs` are not sent — omitting these when `--sample_prompts` is absent would crash the training script.
 
 ## Development Notes
 
