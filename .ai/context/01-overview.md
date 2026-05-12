@@ -56,9 +56,14 @@ Dataset configuration uses TOML files with structured validation:
 ### Web UI (Forge)
 A browser-based training interface is available:
 ```bash
-python forge.py           # start at http://localhost:28471
+start.bat                          # Windows shortcut — activates venv and starts server
+python forge.py                    # start at http://localhost:28471
 python forge.py --port 8080 --reload  # custom port, dev auto-reload
 ```
+`start.bat` activates `venv\Scripts\activate.bat` and passes any extra arguments through to `forge.py`.
+
+No frontend rebuild is ever needed — the SPA is plain JS/CSS with no build step. Changes to `forge.js` or `forge.css` take effect on the next browser refresh. Python/server changes require a restart (or run with `--reload` during development).
+
 Server config is in `forge_config.json` (created automatically on first run).
 
 ### Training Commands Pattern
@@ -124,10 +129,11 @@ When a new model family is added to sd-scripts, also update:
 - Each page has a corresponding `mount{Page}()` function registered in `pageControllers` in `forge.js`.
 - `sock.on(type, handler)` stores **one handler per type** — a second call with the same type overwrites the first. Keep global WebSocket handlers (e.g. `system_stats` for the sidebar GPU meter) in one place.
 - `collectFormState()` reads the train form into a `TrainingConfig`-shaped object; always update it when adding new form fields.
+- `_applyConfigToForm(cfg)` is the inverse of `collectFormState()` — it restores all form fields from a config object, covering every tab (basics, network, schedule, memory, sampling, advanced). When adding new model-specific fields, update **both** functions. Use the internal `setActiveBtn`, `setByLabel`, and `setCheckbox` helpers rather than direct querySelector where possible.
 - `_pendingEdit` (module-level) passes a job config from the Jobs page → `mountTrain()` for pre-population.
 - Utility scripts are invoked via `POST /api/utilities/run` with `{tool, args}` — no job queue; result returned inline.
-- User presets are stored in `localStorage` under key `forge_presets` (object keyed by preset name).
-- **Sample prompts**: users type prompts inline in `#sample-prompts-textarea` (one per line). Width/height/steps/guidance/negative inputs provide defaults that `collectFormState()` appends as `--w --h --s --l --n` directives. The combined text is sent as `sample_prompts_text`; `job_runner.py` writes it to a file. If the textarea is empty, `sample_every_n_steps` and `sample_every_n_epochs` are not sent — omitting these when `--sample_prompts` is absent would crash the training script.
+- **User presets** are stored in `localStorage` under key `forge_presets` (object keyed by preset name). The preset popover calls `collectFormState()` on save and `_applyConfigToForm()` on load. The VAE override checkbox requires `dispatchEvent(new Event('change'))` after setting `.checked` so the `mountTrain` listener can update the input's `disabled` state.
+- **Sample prompts**: users type prompts inline in `#sample-prompts-textarea` (one per line). Width/height/steps/guidance/negative inputs provide defaults that `collectFormState()` appends as `--w --h --s --l --n` directives. The combined text is sent as `sample_prompts_text`; `job_runner.py` writes it to a file. `collectFormState()` also stores the raw textarea text as `sample_prompts_raw` and the individual dimension/step/guidance/negative values separately so `_applyConfigToForm()` can round-trip them correctly. If the textarea is empty, `sample_every_n_steps` and `sample_every_n_epochs` are not sent — omitting these when `--sample_prompts` is absent would crash the training script.
 
 ## Development Notes
 

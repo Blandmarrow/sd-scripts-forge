@@ -320,6 +320,12 @@ function collectFormState() {
         sample_every_n_epochs: parseInt(getByLabel('every_n_epochs') || '') || undefined,
         sample_sampler: activeBtn('[data-pane="sampling"] .form-row:nth-child(2) .row-flex') || 'euler_a',
         sample_prompts_text: sampleRaw.split('\n').map(l => l.trim()).filter(Boolean).map(l => suffix ? `${l} ${suffix}` : l).join('\n'),
+        sample_prompts_raw: sampleRaw,
+        sample_width: sw || undefined,
+        sample_height: sh || undefined,
+        sample_steps: ss || undefined,
+        sample_guidance: sl || undefined,
+        sample_negative: sn || undefined,
       };
     })(),
     min_snr_gamma: parseFloat(getByLabel('min_snr_gamma') || '') || undefined,
@@ -793,11 +799,42 @@ function _applyConfigToForm(cfg) {
   const form = document.getElementById('train-form');
   if (!form) return;
 
-  // Output name
+  const setActiveBtn = (groupSel, value) => {
+    if (!value) return;
+    const row = form.querySelector(groupSel);
+    if (!row) return;
+    row.querySelectorAll('.btn').forEach((b) => {
+      b.classList.toggle('primary', b.textContent.trim() === value);
+    });
+  };
+
+  const setByLabel = (labelText, value) => {
+    if (value === undefined || value === null) return;
+    for (const el of form.querySelectorAll('.kv')) {
+      const lbl = el.querySelector('span')?.textContent?.toUpperCase() ?? '';
+      if (lbl.includes(labelText.toUpperCase())) {
+        const inp = el.querySelector('input');
+        if (inp) { inp.value = value; return; }
+      }
+    }
+  };
+
+  const setCheckbox = (spanText, checked) => {
+    if (checked === undefined) return;
+    for (const el of form.querySelectorAll('label')) {
+      for (const s of el.querySelectorAll('span')) {
+        if (s.textContent.trim() === spanText) {
+          const cb = el.querySelector('input[type=checkbox]');
+          if (cb) { cb.checked = !!checked; return; }
+        }
+      }
+    }
+  };
+
+  // ── Basics ────────────────────────────────────────────────────
   const nameInput = form.querySelector('.input.mono');
   if (nameInput) nameInput.value = cfg.output_name ?? '';
 
-  // Architecture pill
   const archLabel = Object.entries(ARCH_MAP).find(([, v]) => v === cfg.architecture)?.[0];
   if (archLabel) {
     form.querySelectorAll('.arch-pill').forEach((p) => {
@@ -805,7 +842,6 @@ function _applyConfigToForm(cfg) {
     });
   }
 
-  // Mode card
   const modeLabels = { lora:'LoRA', finetune:'Fine-tune', dreambooth:'DreamBooth', ti:'Textual Inversion', controlnet:'ControlNet-LLLite', inpainting:'Inpainting' };
   const modeLabel = modeLabels[cfg.mode];
   if (modeLabel) {
@@ -814,13 +850,28 @@ function _applyConfigToForm(cfg) {
     });
   }
 
-  // Checkpoint
   const ckpt = document.getElementById('ckpt-select');
   if (ckpt && cfg.checkpoint) ckpt.value = cfg.checkpoint;
 
-  // Dataset
   const ds = document.getElementById('ds-select');
   if (ds && cfg.train_data_dir) ds.value = cfg.train_data_dir;
+
+  // VAE override — dispatch change so the mountTrain listener updates disabled state
+  const vaeChk = document.querySelector('[name="use_vae_override"]');
+  const vaeInp = document.getElementById('vae-input');
+  if (vaeChk) {
+    vaeChk.checked = !!cfg.vae;
+    vaeChk.dispatchEvent(new Event('change', { bubbles: false }));
+    if (vaeInp) vaeInp.value = cfg.vae || '';
+  }
+
+  // Resolution buttons
+  if (cfg.resolution) {
+    setActiveBtn('.form-row:has(.bucket-strip) .row-flex', cfg.resolution.split(',')[0]);
+  }
+
+  setCheckbox('enable_bucket', cfg.enable_bucket);
+  setCheckbox('bucket_no_upscale', cfg.bucket_no_upscale);
 
   // Anima extras
   const animaExtras = document.getElementById('anima-extras');
@@ -830,9 +881,52 @@ function _applyConfigToForm(cfg) {
   const t5Input = document.getElementById('t5-tokenizer-input');
   if (t5Input && cfg.t5_tokenizer_path) t5Input.value = cfg.t5_tokenizer_path;
 
-  // Sample prompts
+  // ── Network ───────────────────────────────────────────────────
+  if (cfg.network_module) {
+    const modLabelMap = { 'networks.lora':'networks.lora', 'networks.lora_fa':'networks.lora_fa', 'networks.dylora':'networks.dylora' };
+    setActiveBtn('[data-pane="network"] .form-row:first-child .row-flex', modLabelMap[cfg.network_module] ?? cfg.network_module);
+  }
+  setByLabel('network_dim', cfg.network_dim);
+  setByLabel('network_alpha', cfg.network_alpha);
+
+  // ── Schedule ──────────────────────────────────────────────────
+  setActiveBtn('[data-pane="schedule"] .form-row:first-child .row-flex', cfg.optimizer_type);
+  setByLabel('learning_rate', cfg.learning_rate);
+  setByLabel('unet_lr', cfg.unet_lr);
+  setByLabel('text_encoder_lr', cfg.text_encoder_lr);
+  setActiveBtn('[data-pane="schedule"] .form-row:nth-child(3) .row-flex', cfg.lr_scheduler);
+  setByLabel('lr_warmup_steps', cfg.lr_warmup_steps);
+  setByLabel('num_cycles', cfg.lr_scheduler_num_cycles);
+  setByLabel('max_train_epochs', cfg.max_train_epochs);
+  setByLabel('max_train_steps', cfg.max_train_steps);
+  setByLabel('train_batch_size', cfg.train_batch_size);
+  setByLabel('grad_accum_steps', cfg.gradient_accumulation_steps);
+
+  // ── Memory ────────────────────────────────────────────────────
+  setActiveBtn('[data-pane="memory"] .form-row:first-child .row-flex', cfg.mixed_precision);
+  setCheckbox('gradient_checkpointing', cfg.gradient_checkpointing);
+  setCheckbox('xformers', cfg.xformers);
+  setCheckbox('cache_latents', cfg.cache_latents);
+
+  // ── Sampling ──────────────────────────────────────────────────
+  setByLabel('every_n_steps', cfg.sample_every_n_steps);
+  setByLabel('every_n_epochs', cfg.sample_every_n_epochs);
+  setActiveBtn('[data-pane="sampling"] .form-row:nth-child(2) .row-flex', cfg.sample_sampler);
+  setByLabel('save_every_n_steps', cfg.save_every_n_steps);
+  setByLabel('save_every_n_epochs', cfg.save_every_n_epochs);
+
   const sampleTA = document.getElementById('sample-prompts-textarea');
-  if (sampleTA) sampleTA.value = cfg.sample_prompts_text ?? '';
+  if (sampleTA) sampleTA.value = cfg.sample_prompts_raw ?? cfg.sample_prompts_text ?? '';
+  const swEl = document.getElementById('sample-width');    if (swEl && cfg.sample_width !== undefined) swEl.value = cfg.sample_width;
+  const shEl = document.getElementById('sample-height');   if (shEl && cfg.sample_height !== undefined) shEl.value = cfg.sample_height;
+  const ssEl = document.getElementById('sample-steps');    if (ssEl && cfg.sample_steps !== undefined) ssEl.value = cfg.sample_steps;
+  const slEl = document.getElementById('sample-guidance'); if (slEl && cfg.sample_guidance !== undefined) slEl.value = cfg.sample_guidance;
+  const snEl = document.getElementById('sample-negative'); if (snEl && cfg.sample_negative !== undefined) snEl.value = cfg.sample_negative;
+
+  // ── Advanced ──────────────────────────────────────────────────
+  setByLabel('min_snr_gamma', cfg.min_snr_gamma);
+  setByLabel('noise_offset', cfg.noise_offset);
+  setActiveBtn('[data-pane="advanced"] .form-row:nth-child(2) .row-flex', cfg.log_with);
 
   refreshCliPreview();
 }
