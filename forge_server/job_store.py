@@ -45,6 +45,7 @@ class Job:
             "pid": self.pid,
             "step": self.step,
             "total_steps": self.total_steps,
+            "max_train_epochs": self.config.get("max_train_epochs"),
             "loss": self.loss,
             "lr": self.lr,
             "throughput": self.throughput,

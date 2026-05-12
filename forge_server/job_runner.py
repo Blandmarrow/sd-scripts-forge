@@ -104,18 +104,22 @@ class JobRunner:
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
             )
-            self._store.update(job, status="running", pid=self._proc.pid)
+            proc = self._proc  # local ref so cancel_active() nulling _proc doesn't break us
+            self._store.update(job, status="running", pid=proc.pid)
             await self._broadcast({"type": "queue_update"})
             await self._stream(job)
-            await self._proc.wait()
-            rc = self._proc.returncode
-            final_status = "completed" if rc == 0 else "failed"
-            self._store.update(
-                job,
-                status=final_status,
-                return_code=rc,
-                finished_at=time.time(),
-            )
+            # proc may already be dead if cancelled; wait() returns immediately in that case
+            await proc.wait()
+            rc = proc.returncode
+            # Don't overwrite a status already set by cancel_active()
+            if job.status == "running":
+                final_status = "completed" if rc == 0 else "failed"
+                self._store.update(
+                    job,
+                    status=final_status,
+                    return_code=rc,
+                    finished_at=time.time(),
+                )
         except Exception as exc:
             self._store.update(job, status="failed", finished_at=time.time())
             self._store.append_log(job, f"[Forge error] {exc}")
@@ -126,29 +130,62 @@ class JobRunner:
 
     async def _stream(self, job: Job):
         assert self._proc and self._proc.stdout
-        async for raw in self._proc.stdout:
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            # Strip bare CR-only progress lines from tqdm
-            line = line.replace("\r", " ").strip()
-            if not line:
-                continue
-            self._store.append_log(job, line)
-            self._parse_progress(job, line)
-            await self._broadcast({
-                "type": "log_line",
-                "job_id": job.id,
-                "line": line,
-            })
-            await self._broadcast({
-                "type": "job_status",
-                "job_id": job.id,
-                "status": job.status,
-                "step": job.step,
-                "total_steps": job.total_steps,
-                "loss": job.loss,
-                "lr": job.lr,
-                "throughput": job.throughput,
-            })
+        buf = b""
+        _last_status = 0.0
+
+        while True:
+            chunk = await self._proc.stdout.read(4096)
+            if not chunk:
+                break
+            buf += chunk
+            # Treat \r as a line separator so tqdm step updates are processed individually
+            normalized = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            parts = normalized.split(b"\n")
+            buf = parts[-1]  # incomplete trailing segment — keep for next chunk
+            for raw in parts[:-1]:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                self._parse_progress(job, line)
+                # Only send tqdm progress lines to the console log buffer
+                # if they are epoch-completion lines (not per-step noise)
+                is_tqdm = bool(_TQDM_RE.search(line))
+                if not is_tqdm:
+                    self._store.append_log(job, line)
+                    await self._broadcast({"type": "log_line", "job_id": job.id, "line": line})
+                now = time.time()
+                if now - _last_status >= 0.5:
+                    _last_status = now
+                    await self._broadcast({
+                        "type": "job_status",
+                        "job_id": job.id,
+                        "status": job.status,
+                        "step": job.step,
+                        "total_steps": job.total_steps,
+                        "max_train_epochs": job.config.get("max_train_epochs"),
+                        "loss": job.loss,
+                        "lr": job.lr,
+                        "throughput": job.throughput,
+                    })
+
+        # Flush any remaining buffer content
+        if buf.strip():
+            line = buf.decode("utf-8", errors="replace").strip()
+            if line:
+                self._store.append_log(job, line)
+                await self._broadcast({"type": "log_line", "job_id": job.id, "line": line})
+
+        # Always emit a final status so the UI reflects completion state
+        await self._broadcast({
+            "type": "job_status",
+            "job_id": job.id,
+            "status": job.status,
+            "step": job.step,
+            "total_steps": job.total_steps,
+            "loss": job.loss,
+            "lr": job.lr,
+            "throughput": job.throughput,
+        })
 
     def _parse_progress(self, job: Job, line: str):
         m = _TQDM_RE.search(line)

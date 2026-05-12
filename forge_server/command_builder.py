@@ -214,9 +214,11 @@ def build(cfg: "TrainingConfig", settings: "ForgeSettings") -> list[str]:
     if cfg.cache_latents_to_disk:
         args.append("--cache_latents_to_disk")
 
-    if cfg.cache_text_encoder_outputs:
+    # Caching TE outputs is incompatible with training the TE — suppress silently when TE LR is set
+    training_te = cfg.text_encoder_lr is not None and not cfg.network_train_unet_only
+    if cfg.cache_text_encoder_outputs and not training_te:
         args.append("--cache_text_encoder_outputs")
-    if cfg.cache_text_encoder_outputs_to_disk:
+    if cfg.cache_text_encoder_outputs_to_disk and not training_te:
         args.append("--cache_text_encoder_outputs_to_disk")
 
     if cfg.vae_batch_size > 1:

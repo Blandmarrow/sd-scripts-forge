@@ -36,7 +36,7 @@
       <div class="nav-item" data-page="jobs">
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>
         Jobs &amp; queue
-        <span class="nav-tail mono">3</span>
+        <span class="nav-tail mono" id="nav-badge-jobs">—</span>
       </div>
       <div class="nav-item" data-page="logs">
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 13.5h11M4.5 13V8M7.5 13V4M10.5 13V9.5M13.5 13V6.5"/></svg>
@@ -47,12 +47,12 @@
       <div class="nav-item" data-page="models">
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5l5.5-2 5.5 2v7l-5.5 2-5.5-2v-7z"/><path d="M2.5 4.5L8 6.5l5.5-2"/><path d="M8 6.5v7"/></svg>
         Base models
-        <span class="nav-tail mono">12</span>
+        <span class="nav-tail mono" id="nav-badge-models">—</span>
       </div>
       <div class="nav-item" data-page="loras">
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></svg>
         Trained LoRAs
-        <span class="nav-tail mono">28</span>
+        <span class="nav-tail mono" id="nav-badge-loras">—</span>
       </div>
       <div class="nav-item" data-page="datasets">
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><ellipse cx="8" cy="3.5" rx="5.5" ry="2"/><path d="M2.5 3.5v4c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2v-4"/><path d="M2.5 7.5v4c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2v-4"/></svg>
@@ -74,7 +74,7 @@
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="9" rx="1"/><path d="M5 6.5h6M5 9h4"/></svg>
       <div class="gpu-meter">
         <div class="row">
-          <span>RTX 4090</span><span class="mono" id="gpu-pct">22.1 / 24 GB</span>
+          <span id="gpu-name">—</span><span class="mono" id="gpu-pct">22.1 / 24 GB</span>
         </div>
         <div class="bar"><div class="fill" id="gpu-fill" style="width:92%"></div></div>
       </div>
@@ -258,8 +258,8 @@
           <div class="form-row">
             <div class="lbl-col"><h4>Output name</h4><p>Used for the saved <span class="mono">.safetensors</span>, sample folder, and TensorBoard run.</p></div>
             <div>
-              <input class="input mono" value="portrait_v3_loraXL_v2" style="width:100%; max-width: 360px;" />
-              <div class="mono" style="color:var(--fg-dim); font-size: 11px; margin-top: 6px">→ D:\runs\portrait_v3_loraXL_v2\</div>
+              <input class="input mono" id="output-name-input" value="" placeholder="my_lora" style="width:100%; max-width: 360px;" />
+              <div class="mono" id="output-path-preview" style="color:var(--fg-dim); font-size: 11px; margin-top: 6px"></div>
             </div>
           </div>
 
@@ -356,14 +356,20 @@
           <div class="form-row">
             <div class="lbl-col"><h4>Resolution &amp; bucketing</h4><p>Aspect-ratio bucketing fits your dataset's distribution without cropping.</p></div>
             <div>
-              <div class="row-flex">
-                <button class="btn sm">512</button>
-                <button class="btn sm primary">768</button>
+              <div class="row-flex" id="resolution-btns">
+                <button class="btn sm primary">512</button>
+                <button class="btn sm">768</button>
                 <button class="btn sm">1024</button>
-                <button class="btn sm">Custom…</button>
+                <button class="btn sm" id="custom-res-btn">Custom…</button>
                 <span style="color:var(--fg-soft)">·</span>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked/> <span>enable_bucket</span></label>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked/> <span>bucket_no_upscale</span></label>
+              </div>
+              <div id="custom-res-inputs" style="display:none; margin-top:8px; display:none;">
+                <input id="custom-res-w" class="input mono" style="width:80px" placeholder="1280"/>
+                <span style="margin:0 6px;color:var(--fg-dim)">×</span>
+                <input id="custom-res-h" class="input mono" style="width:80px" placeholder="960"/>
+                <span style="margin-left:6px;font-size:11px;color:var(--fg-dim)">px (multiple of 64)</span>
               </div>
               <div class="bucket-strip" id="bucket-strip"></div>
             </div>
@@ -506,7 +512,7 @@
               <div class="row-flex" style="margin-top: 10px;">
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>full_fp16</span></label>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>full_bf16</span></label>
-                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked /> <span>fp8_base <span class="badge solid mono" style="margin-left:4px">FLUX</span></span></label>
+                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked /> <span>fp8_base</span><span class="badge solid mono" style="margin-left:4px">FLUX</span></label>
               </div>
             </div>
 
@@ -537,7 +543,7 @@
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked /> <span>cache_latents</span></label>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>cache_latents_to_disk</span></label>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked /> <span>cache_text_encoder_outputs</span></label>
-                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>…_to_disk</span></label>
+                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>cache_text_encoder_outputs_to_disk</span></label>
               </div>
             </div>
           </div>
@@ -589,7 +595,7 @@
               <div class="lbl-col"><h4>Save</h4><p>Checkpoint interval and on-disk format.</p></div>
               <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; max-width: 360px;">
                 <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">save_every_n_steps</span><input class="input mono" value="500" /></label>
-                <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">save_every_n_epochs</span><input class="input mono" value="1" /></label>
+                <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">save_every_n_epochs</span><input class="input mono" value="" /></label>
               </div>
               <div class="row-flex" style="margin-top: 10px;">
                 <button class="btn sm primary">safetensors</button>
@@ -688,44 +694,16 @@
       <div class="panel">
         <div class="panel-h"><h3>Run summary</h3><span class="grow"></span><span class="badge dot good">ready</span></div>
         <div class="panel-b">
-          <div class="sum-row"><span class="k">Mode</span><span class="v">LoRA · SDXL</span></div>
-          <div class="sum-row"><span class="k">Network</span><span class="v mono">rank 32 · α 16 · attn+mlp</span></div>
-          <div class="sum-row"><span class="k">Optimizer</span><span class="v mono">AdamW8bit</span></div>
-          <div class="sum-row"><span class="k">LR</span><span class="v mono">unet 1e-4 · TE 5e-5</span></div>
-          <div class="sum-row"><span class="k">Schedule</span><span class="v mono">cosine_with_restarts · warmup 50</span></div>
-          <div class="sum-row"><span class="k">Batch</span><span class="v mono">2 × grad_acc 4 = 8</span></div>
-          <div class="sum-row"><span class="k">Steps</span><span class="v mono">10 ep × 768 = 7,680</span></div>
-          <div class="sum-row"><span class="k">Precision</span><span class="v mono">bf16 + fp8 base</span></div>
-          <div class="sum-row"><span class="k">Memory</span><span class="v mono">grad_ckpt · xformers</span></div>
-          <div class="sum-row"><span class="k">Output</span><span class="v mono">portrait_v3_loraXL_v2.safetensors</span></div>
-
-          <div class="divider"></div>
-
-          <div class="vram-bar">
-            <div class="vram-bar-h">
-              <span>Estimated VRAM</span>
-              <span class="mono">19.2 / 24.0 GB</span>
-            </div>
-            <div class="vram-bar-track">
-              <div class="vram-seg" style="width:32%; background: var(--info)"></div>
-              <div class="vram-seg" style="width:18%; background: var(--accent)"></div>
-              <div class="vram-seg" style="width:12%; background: var(--accent-2)"></div>
-              <div class="vram-seg" style="width:18%; background: var(--warn)"></div>
-            </div>
-            <div class="vram-legend mono">
-              <span><i style="background:var(--info)"></i>base 7.7</span>
-              <span><i style="background:var(--accent)"></i>activations 4.3</span>
-              <span><i style="background:var(--accent-2)"></i>optim 2.9</span>
-              <span><i style="background:var(--warn)"></i>buffer 4.3</span>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="time-est">
-            <div><span class="k">Est. wall time</span><span class="v mono">≈ 1h 02m</span></div>
-            <div><span class="k">@ 2.06 it/s</span><span class="v mono">7,680 steps</span></div>
-          </div>
+          <div class="sum-row"><span class="k">Mode</span><span class="v" id="sum-mode">—</span></div>
+          <div class="sum-row"><span class="k">Network</span><span class="v mono" id="sum-network">—</span></div>
+          <div class="sum-row"><span class="k">Optimizer</span><span class="v mono" id="sum-optimizer">—</span></div>
+          <div class="sum-row"><span class="k">LR</span><span class="v mono" id="sum-lr">—</span></div>
+          <div class="sum-row"><span class="k">Schedule</span><span class="v mono" id="sum-schedule">—</span></div>
+          <div class="sum-row"><span class="k">Batch</span><span class="v mono" id="sum-batch">—</span></div>
+          <div class="sum-row"><span class="k">Steps</span><span class="v mono" id="sum-steps">—</span></div>
+          <div class="sum-row"><span class="k">Precision</span><span class="v mono" id="sum-precision">—</span></div>
+          <div class="sum-row"><span class="k">Memory</span><span class="v mono" id="sum-memory">—</span></div>
+          <div class="sum-row"><span class="k">Output</span><span class="v mono" id="sum-output">—</span></div>
         </div>
       </div>
 
@@ -774,7 +752,7 @@
   <div class="page-h">
     <div>
       <h1>Jobs &amp; queue</h1>
-      <p>One job runs at a time on RTX 4090. Drag to reorder the queue.</p>
+      <p>One job runs at a time on <span id="jobs-gpu-name">your GPU</span>. Drag to reorder the queue.</p>
     </div>
     <div class="actions">
       <button class="btn primary" id="queue-toggle" data-on="0" onclick="var on=this.dataset.on==='1';this.dataset.on=on?'0':'1';this.innerHTML=on?'<svg class=&quot;ico&quot; viewBox=&quot;0 0 16 16&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.6&quot;><path d=&quot;M4 3l8 5-8 5V3z&quot;/></svg> Start queue':'<svg class=&quot;ico&quot; viewBox=&quot;0 0 16 16&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.6&quot;><path d=&quot;M5 3v10M11 3v10&quot;/></svg> Pause queue';">
@@ -785,56 +763,15 @@
   </div>
 
   <div class="panel">
-    <div class="panel-h"><h3>Now training</h3><span class="grow"></span><button class="btn sm">Save checkpoint &amp; stop</button><button class="btn sm danger">Kill</button></div>
+    <div class="panel-h"><h3>Now training</h3><span class="grow"></span><button class="btn sm danger" id="jobs-stop-btn">Stop</button></div>
     <div class="panel-b">
-      <div class="job-now">
-        <div>
-          <div class="job-title">portrait_v3_loraXL_v2</div>
-          <div class="mono job-meta">SDXL · LoRA r32 · AdamW8bit · started 14:02:11 · PID 28471</div>
-          <div class="job-progress">
-            <div class="bar"><div class="fill" style="width:46%"></div></div>
-            <div class="job-steps mono">
-              <span>step <b>1,824</b> / 4,000</span>
-              <span>loss <b>0.1142</b></span>
-              <span>2.06 it/s</span>
-              <span>ETA 17m 41s</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div class="job-now"><div class="empty">Loading…</div></div>
     </div>
   </div>
 
   <div class="panel" style="margin-top: 16px;">
-    <div class="panel-h"><h3>Queued</h3><span class="badge solid mono">2</span></div>
-    <div class="panel-b" style="padding: 0;">
-      <div class="job-row">
-        <div class="job-handle">⋮⋮</div>
-        <div class="job-num mono">#1</div>
-        <div>
-          <div class="job-title">style_studioghibli_loraXL</div>
-          <div class="mono job-meta">SDXL · LoRA r64 · 612 imgs · cosine · ≈ 48 min</div>
-        </div>
-        <div class="job-tags"><span class="badge solid">grad_ckpt</span><span class="badge solid">xformers</span></div>
-        <div class="job-actions">
-          <button class="btn ghost sm">Edit</button>
-          <button class="btn ghost sm danger">Remove</button>
-        </div>
-      </div>
-      <div class="job-row">
-        <div class="job-handle">⋮⋮</div>
-        <div class="job-num mono">#2</div>
-        <div>
-          <div class="job-title">char_alice_dbXL</div>
-          <div class="mono job-meta">SDXL · DreamBooth · class "woman" · 2 ep · ≈ 2h 54m</div>
-        </div>
-        <div class="job-tags"><span class="badge solid">prior_pres</span><span class="badge dot warn">VRAM tight</span></div>
-        <div class="job-actions">
-          <button class="btn ghost sm">Edit</button>
-          <button class="btn ghost sm danger">Remove</button>
-        </div>
-      </div>
-    </div>
+    <div class="panel-h"><h3>Queued</h3><span class="badge solid mono" id="queued-panel-badge"></span></div>
+    <div class="panel-b" style="padding: 0;" id="queued-panel-body"></div>
   </div>
 
   <div class="panel" style="margin-top: 16px;">
@@ -854,21 +791,20 @@
 <section data-screen-label="Live monitor">
   <div class="page-h">
     <div>
-      <h1>Live monitor · <span class="mono" style="color:var(--accent)">portrait_v3_loraXL_v2</span></h1>
-      <p>Step 1,824 / 4,000 · 2.06 it/s · ETA 17m 41s · started 14:02:11</p>
+      <h1 id="logs-title">Live monitor</h1>
+      <p id="logs-subtitle">No active job</p>
     </div>
     <div class="actions">
       <button class="btn">Open TensorBoard</button>
-      <button class="btn">Save checkpoint</button>
       <button class="btn danger">Stop</button>
     </div>
   </div>
 
   <div class="grid-4" style="margin-bottom: 16px;">
-    <div class="stat-card"><div class="k">Loss · last 50</div><div class="v">0.114<small>↓</small></div><div class="delta mono">smoothed exp 0.121</div></div>
-    <div class="stat-card"><div class="k">Learning rate</div><div class="v mono" style="font-size:18px">8.4e-5</div><div class="delta mono" style="color:var(--fg-mute)">cosine · 46% of cycle</div></div>
-    <div class="stat-card"><div class="k">VRAM</div><div class="v">19.4<small>/ 24 GB</small></div><div class="delta mono" style="color:var(--good)">stable</div></div>
-    <div class="stat-card"><div class="k">Throughput</div><div class="v">2.06<small>it/s</small></div><div class="delta mono" style="color:var(--good)">+0.04 vs avg</div></div>
+    <div class="stat-card"><div class="k">Loss · last 50</div><div class="v" id="logs-loss-val">—</div><div class="delta mono" id="logs-loss-delta"></div></div>
+    <div class="stat-card"><div class="k">Learning rate</div><div class="v mono" id="logs-lr-val" style="font-size:18px">—</div><div class="delta mono" style="color:var(--fg-mute)"></div></div>
+    <div class="stat-card"><div class="k">VRAM</div><div class="v" id="logs-vram-val">—</div><div class="delta mono" style="color:var(--good)"></div></div>
+    <div class="stat-card"><div class="k">Throughput</div><div class="v" id="logs-thru-val">—</div><div class="delta mono" style="color:var(--good)"></div></div>
   </div>
 
   <div class="grid-2" style="grid-template-columns: 1.4fr 1fr;">
@@ -910,15 +846,15 @@
     </div>
 
     <div class="panel">
-      <div class="panel-h"><h3>Sample images</h3><span class="grow"></span><span class="mono" style="color:var(--fg-dim);font-size:11px">step 1,500 of 4,000</span></div>
+      <div class="panel-h"><h3>Sample images</h3><span class="grow"></span><span id="logs-samples-step" class="mono" style="color:var(--fg-dim);font-size:11px"></span></div>
       <div class="panel-b" style="padding: 14px;">
         <div class="sample-grid" id="sample-grid-big"></div>
         <div class="sample-controls mono">
-          <button class="icon-btn" title="prev"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3l-5 5 5 5"/></svg></button>
-          <span>step <b>1,500</b></span>
-          <button class="icon-btn" title="next"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg></button>
+          <button class="icon-btn" id="samples-prev-btn" title="prev"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3l-5 5 5 5"/></svg></button>
+          <span id="samples-step-label">—</span>
+          <button class="icon-btn" id="samples-next-btn" title="next"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg></button>
           <span style="color:var(--fg-soft)">·</span>
-          <span style="color:var(--fg-mute)">next sample at step <b>2,000</b></span>
+          <span id="samples-next-label" style="color:var(--fg-mute)">—</span>
         </div>
       </div>
     </div>
@@ -956,13 +892,13 @@
     </div>
   </div>
 
-  <div class="row-flex" style="margin-bottom: 14px;">
-    <button class="btn sm primary">All <span class="mono" style="color:#03130d;opacity:.55;margin-left:4px">12</span></button>
-    <button class="btn sm">SD 1.5 <span class="mono" style="color:var(--fg-dim);margin-left:4px">3</span></button>
-    <button class="btn sm">SDXL <span class="mono" style="color:var(--fg-dim);margin-left:4px">5</span></button>
-    <button class="btn sm">SD3 <span class="mono" style="color:var(--fg-dim);margin-left:4px">1</span></button>
-    <button class="btn sm">FLUX.1 <span class="mono" style="color:var(--fg-dim);margin-left:4px">2</span></button>
-    <button class="btn sm">Anima <span class="mono" style="color:var(--fg-dim);margin-left:4px">1</span></button>
+  <div class="row-flex" id="model-filter-pills" style="margin-bottom: 14px;">
+    <button class="btn sm primary" data-filter="all">All <span class="mono model-count" style="color:#03130d;opacity:.55;margin-left:4px"></span></button>
+    <button class="btn sm" data-filter="sd15">SD 1.5 <span class="mono model-count" style="color:var(--fg-dim);margin-left:4px"></span></button>
+    <button class="btn sm" data-filter="sdxl">SDXL <span class="mono model-count" style="color:var(--fg-dim);margin-left:4px"></span></button>
+    <button class="btn sm" data-filter="sd3">SD3 <span class="mono model-count" style="color:var(--fg-dim);margin-left:4px"></span></button>
+    <button class="btn sm" data-filter="flux">FLUX.1 <span class="mono model-count" style="color:var(--fg-dim);margin-left:4px"></span></button>
+    <button class="btn sm" data-filter="anima">Anima <span class="mono model-count" style="color:var(--fg-dim);margin-left:4px"></span></button>
   </div>
 
   <div class="model-cards" id="model-cards"></div>

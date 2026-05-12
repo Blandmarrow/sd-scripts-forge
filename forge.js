@@ -68,13 +68,17 @@ class ForgeSocket {
     this._ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        this._handlers[msg.type]?.(msg);
+        (this._handlers[msg.type] ?? []).forEach((h) => h(msg));
       } catch {}
     };
     this._ws.onclose = () => setTimeout(() => this._connect(), 2000);
     this._ws.onerror = () => {};
   }
-  on(type, fn) { this._handlers[type] = fn; return this; }
+  on(type, fn) {
+    if (!this._handlers[type]) this._handlers[type] = [];
+    this._handlers[type].push(fn);
+    return this;
+  }
 }
 const sock = new ForgeSocket();
 
@@ -130,7 +134,6 @@ const gpuFill = document.getElementById('gpu-fill');
 const gpuPct  = document.getElementById('gpu-pct');
 
 sock.on('system_stats', (msg) => {
-  // Always update sidebar GPU meter
   const gpu = msg.gpu;
   if (gpu?.available) {
     const pct = gpu.total_gb > 0 ? (gpu.used_gb / gpu.total_gb) : 0;
@@ -139,9 +142,24 @@ sock.on('system_stats', (msg) => {
       gpuFill.className = `fill${pct > 0.9 ? ' danger' : pct > 0.75 ? ' warn' : ''}`;
     }
     if (gpuPct) gpuPct.textContent = `${gpu.used_gb} / ${gpu.total_gb} GB`;
+    // GPU name — update all named slots
+    if (gpu.name) {
+      ['gpu-name', 'jobs-gpu-name'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = gpu.name;
+      });
+    }
   }
-  // Also update dashboard stat cards if on dashboard
   if (router.current === 'dashboard') _updateDashGpu(gpu);
+});
+
+sock.on('system_stats', (msg) => {
+  if (router.current !== 'logs') return;
+  const gpu = msg.gpu;
+  if (gpu?.available) {
+    const el = document.getElementById('logs-vram-val');
+    if (el) el.innerHTML = `${gpu.used_gb}<small>/ ${gpu.total_gb} GB</small>`;
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -157,8 +175,8 @@ sock.on('job_status', (msg) => {
     if (progPill) progPill.style.display = '';
     const pct = msg.total_steps > 0 ? (msg.step / msg.total_steps) * 100 : 0;
     if (progFill)  progFill.style.width = `${pct}%`;
-    if (progLabel) progLabel.textContent = `Step ${msg.step.toLocaleString()} · loss ${msg.loss?.toFixed(4) ?? '—'}`;
-    if (progNum)   progNum.textContent   = `${msg.step.toLocaleString()} / ${msg.total_steps.toLocaleString()}`;
+    if (progLabel) progLabel.textContent = `${fmtStep(msg.step, msg.total_steps)} · loss ${msg.loss?.toFixed(4) ?? '—'}`;
+    if (progNum)   progNum.textContent = fmtStep(msg.step, msg.total_steps);
   } else {
     if (progPill && msg.status !== 'running') progPill.style.display = 'none';
   }
@@ -262,9 +280,33 @@ function collectFormState() {
     return '';
   };
 
-  const outputName = inputs[0]?.value ?? 'my_lora';
+  const getCheckbox = (spanText) => {
+    for (const el of form.querySelectorAll('label')) {
+      for (const s of el.querySelectorAll('span')) {
+        if (s.textContent.trim() === spanText) {
+          const cb = el.querySelector('input[type=checkbox]');
+          if (cb) return cb.checked;
+        }
+      }
+    }
+    return false;
+  };
+
+  const outputNameEl = document.getElementById('output-name-input') ?? inputs[0];
+  const outputName = outputNameEl?.value?.trim() || 'my_lora';
   const vaeOverride = form.querySelector('[name="use_vae_override"]')?.checked;
   const vaeVal = document.getElementById('vae-input')?.value || undefined;
+
+  // Custom resolution: use custom-res-w/h inputs if visible
+  const customResDiv = document.getElementById('custom-res-inputs');
+  const useCustomRes = customResDiv && customResDiv.style.display !== 'none';
+  const customW = document.getElementById('custom-res-w')?.value?.trim();
+  const customH = document.getElementById('custom-res-h')?.value?.trim();
+  const resValue = useCustomRes && customW && customH
+    ? `${customW},${customH}`
+    : (activeBtn('.form-row:has(.bucket-strip)').match(/^\d+$/)
+        ? `${activeBtn('.form-row:has(.bucket-strip)')},${ activeBtn('.form-row:has(.bucket-strip)')}`
+        : '1024,1024');
 
   return {
     output_name: outputName,
@@ -274,7 +316,7 @@ function collectFormState() {
     checkpoint: form.querySelector('#ckpt-select')?.value ?? '',
     vae: vaeOverride ? vaeVal : undefined,
     train_data_dir: document.getElementById('ds-select')?.value ?? '',
-    resolution: activeBtn('.form-row:has(.bucket-strip)').match(/^\d+$/) ? activeBtn('.form-row:has(.bucket-strip)') + ',' + activeBtn('.form-row:has(.bucket-strip)') : '1024,1024',
+    resolution: resValue,
     enable_bucket: checked('[name="enable_bucket"], input[type=checkbox][class=checkbox]:nth-of-type(1)'),
     bucket_no_upscale: true,
     shuffle_caption: checked('[name="shuffle_caption"]'),
@@ -299,9 +341,20 @@ function collectFormState() {
     train_batch_size: parseInt(getByLabel('train_batch_size') || '1') || 1,
     gradient_accumulation_steps: parseInt(getByLabel('grad_accum_steps') || '1') || 1,
     mixed_precision: activeBtn('[data-pane="memory"] .form-row:first-child .row-flex') || 'bf16',
-    gradient_checkpointing: true,
-    xformers: false,
-    cache_latents: true,
+    full_fp16: getCheckbox('full_fp16'),
+    full_bf16: getCheckbox('full_bf16'),
+    fp8_base: getCheckbox('fp8_base'),
+    gradient_checkpointing: getCheckbox('gradient_checkpointing'),
+    xformers: getCheckbox('xformers'),
+    sdpa: getCheckbox('sdpa'),
+    mem_eff_attn: getCheckbox('mem_eff_attn'),
+    lowram: getCheckbox('lowram'),
+    highvram: getCheckbox('highvram'),
+    cache_latents: getCheckbox('cache_latents'),
+    cache_latents_to_disk: getCheckbox('cache_latents_to_disk'),
+    cache_text_encoder_outputs: getCheckbox('cache_text_encoder_outputs'),
+    cache_text_encoder_outputs_to_disk: getCheckbox('cache_text_encoder_outputs_to_disk'),
+    vae_batch_size: parseInt(getByLabel('vae_batch_size') || '1') || 1,
     save_every_n_steps: parseInt(getByLabel('save_every_n_steps') || '500') || undefined,
     save_every_n_epochs: parseInt(getByLabel('save_every_n_epochs') || '') || undefined,
     save_model_as: 'safetensors',
@@ -402,6 +455,38 @@ function renderLossChart(svgId, fillId, lineId, points) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Nav badge counts
+// ═══════════════════════════════════════════════════════════════
+async function refreshNavCounts() {
+  try {
+    const [{ jobs, active_job_id }, { models }, { loras }] = await Promise.all([
+      api.jobs(), api.models(), api.loras(),
+    ]);
+    const jobCount = jobs.filter((j) => j.status === 'queued').length + (active_job_id ? 1 : 0);
+    const jobBadge = document.getElementById('nav-badge-jobs');
+    const modelBadge = document.getElementById('nav-badge-models');
+    const loraBadge = document.getElementById('nav-badge-loras');
+    if (jobBadge) jobBadge.textContent = jobCount || '';
+    if (modelBadge) modelBadge.textContent = models.length || '';
+    if (loraBadge) loraBadge.textContent = loras.length || '';
+  } catch {}
+}
+
+function fmtDuration(secs) {
+  secs = Math.round(secs);
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
+}
+
+function fmtStep(step, totalSteps) {
+  step = step || 0;
+  totalSteps = totalSteps || 0;
+  return totalSteps ? `${step.toLocaleString()} / ${totalSteps.toLocaleString()}` : `${step.toLocaleString()}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Page: Dashboard
 // ═══════════════════════════════════════════════════════════════
 async function mountDashboard() {
@@ -428,7 +513,7 @@ async function mountDashboard() {
     const elSteps = document.getElementById('dash-active-steps');
     if (elPct) elPct.innerHTML = activeJob ? `${pct}<small>%</small>` : '—';
     if (elSteps) elSteps.textContent = activeJob
-      ? `step ${activeJob.step.toLocaleString()} / ${activeJob.total_steps.toLocaleString()}`
+      ? fmtStep(activeJob.step, activeJob.total_steps, activeJob.max_train_epochs)
       : 'no active job';
 
     // Stat card: queue
@@ -501,7 +586,7 @@ function _renderDashActiveRun(job) {
   if (empty) empty.style.display = 'none';
   if (content) content.style.display = '';
   if (badge) badge.style.display = '';
-  if (pid) pid.textContent = `PID ${job.pid ?? '—'} · step ${job.step}`;
+  if (pid) pid.textContent = `PID ${job.pid ?? '—'} · ${fmtStep(job.step, job.total_steps, job.max_train_epochs)}`;
 
   const pct = job.total_steps > 0 ? (job.step / job.total_steps * 100).toFixed(1) : 0;
   const el = (id) => document.getElementById(id);
@@ -511,7 +596,7 @@ function _renderDashActiveRun(job) {
   if (el('dash-run-loss')) el('dash-run-loss').textContent = job.loss?.toFixed(4) ?? '—';
   if (el('dash-run-bar'))  el('dash-run-bar').style.width = `${pct}%`;
   if (el('dash-run-step')) el('dash-run-step').textContent =
-    `step ${job.step.toLocaleString()} / ${job.total_steps.toLocaleString()}`;
+    fmtStep(job.step, job.total_steps, job.max_train_epochs);
   if (el('dash-run-thru')) el('dash-run-thru').textContent =
     `${job.throughput?.toFixed(2) ?? '—'} it/s`;
 
@@ -530,8 +615,50 @@ function _renderDashActiveRun(job) {
   }
 }
 
-// WebSocket: refresh dashboard stats when queue changes
-sock.on('queue_update', () => { if (router.current === 'dashboard') mountDashboard(); });
+sock.on('queue_update', () => {
+  refreshNavCounts();
+  if (router.current === 'dashboard') mountDashboard();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Summary panel updater (Train page right column)
+// ═══════════════════════════════════════════════════════════════
+function updateSummary() {
+  const s = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val ?? '—'; };
+  try {
+    const cfg = collectFormState();
+    if (!cfg.architecture) return;
+    const archLabel = Object.entries(ARCH_MAP).find(([, v]) => v === cfg.architecture)?.[0] ?? cfg.architecture;
+    const modeLabels = { lora:'LoRA', finetune:'Fine-tune', dreambooth:'DreamBooth', ti:'Textual Inversion', controlnet:'ControlNet-LLLite', inpainting:'Inpainting' };
+    s('sum-mode', `${archLabel} · ${modeLabels[cfg.mode] ?? cfg.mode}`);
+    s('sum-network', `rank ${cfg.network_dim} · α ${cfg.network_alpha}`);
+    s('sum-optimizer', cfg.optimizer_type);
+    const lrParts = [];
+    if (cfg.unet_lr) lrParts.push(`unet ${cfg.unet_lr}`);
+    if (cfg.text_encoder_lr) lrParts.push(`TE ${cfg.text_encoder_lr}`);
+    if (!lrParts.length) lrParts.push(String(cfg.learning_rate));
+    s('sum-lr', lrParts.join(' · '));
+    const warmup = cfg.lr_warmup_steps ? ` · warmup ${cfg.lr_warmup_steps}` : '';
+    s('sum-schedule', `${cfg.lr_scheduler}${warmup}`);
+    const effBatch = cfg.train_batch_size * (cfg.gradient_accumulation_steps || 1);
+    s('sum-batch', `${cfg.train_batch_size} × grad_acc ${cfg.gradient_accumulation_steps} = ${effBatch}`);
+    const stepsStr = cfg.max_train_steps
+      ? `${cfg.max_train_steps} steps`
+      : cfg.max_train_epochs
+        ? `${cfg.max_train_epochs} epochs`
+        : '—';
+    s('sum-steps', stepsStr);
+    const precParts = [cfg.mixed_precision];
+    if (cfg.fp8_base) precParts.push('fp8 base');
+    s('sum-precision', precParts.join(' + '));
+    const memParts = [];
+    if (cfg.gradient_checkpointing) memParts.push('grad_ckpt');
+    if (cfg.xformers) memParts.push('xformers');
+    if (cfg.sdpa) memParts.push('sdpa');
+    s('sum-memory', memParts.join(' · ') || '—');
+    s('sum-output', `${cfg.output_name || 'my_lora'}.safetensors`);
+  } catch {}
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Page: Train
@@ -556,6 +683,7 @@ async function mountTrain() {
       archStrip.querySelectorAll('.arch-pill').forEach((p) => p.classList.remove('sel'));
       pill.classList.add('sel');
       updateArchExtras();
+      updateSummary();
       refreshCliPreview();
     });
   });
@@ -566,6 +694,7 @@ async function mountTrain() {
     card.addEventListener('click', () => {
       form.querySelectorAll('.mode-card').forEach((c) => c.classList.remove('sel'));
       card.classList.add('sel');
+      updateSummary();
       refreshCliPreview();
     });
   });
@@ -580,6 +709,7 @@ async function mountTrain() {
         siblings.forEach((b) => b.classList.remove('primary'));
         btn.classList.add('primary');
         refreshCliPreview();
+        updateSummary();
       }
     });
   });
@@ -696,6 +826,47 @@ async function mountTrain() {
       btn.addEventListener('click', startTraining);
     }
   });
+
+  // ── Output path preview ───────────────────────────────────────
+  let _outputDir = 'output';
+  api.settings().then((s) => {
+    _outputDir = s.output_dir ?? 'output';
+    const nameEl = document.getElementById('output-name-input');
+    const preview = document.getElementById('output-path-preview');
+    if (preview && nameEl) preview.textContent = `→ ${_outputDir}/${nameEl.value || 'my_lora'}/`;
+  }).catch(() => {});
+
+  const nameInputEl = document.getElementById('output-name-input');
+  nameInputEl?.addEventListener('input', () => {
+    const preview = document.getElementById('output-path-preview');
+    if (preview) preview.textContent = `→ ${_outputDir}/${nameInputEl.value || 'my_lora'}/`;
+    updateSummary();
+    refreshCliPreview();
+  });
+
+  // ── Custom resolution ─────────────────────────────────────────
+  document.getElementById('custom-res-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const inp = document.getElementById('custom-res-inputs');
+    if (!inp) return;
+    const visible = inp.style.display !== 'none';
+    inp.style.display = visible ? 'none' : '';
+    // Deselect preset buttons when custom is shown
+    if (!visible) {
+      document.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)').forEach((b) => b.classList.remove('primary'));
+      document.getElementById('custom-res-btn').classList.add('primary');
+    }
+    refreshCliPreview();
+  });
+  document.getElementById('custom-res-w')?.addEventListener('input', refreshCliPreview);
+  document.getElementById('custom-res-h')?.addEventListener('input', refreshCliPreview);
+
+  // ── Summary panel ─────────────────────────────────────────────
+  updateSummary();
+  // Hook summary into existing refresh chain
+  const _origRefreshCli = refreshCliPreview;
+  form.addEventListener('change', updateSummary);
+  form.addEventListener('input', updateSummary);
 
   // ── Apply pending edit (from Jobs "Edit" button) ──────────────
   if (_pendingEdit) {
@@ -832,7 +1003,7 @@ function _applyConfigToForm(cfg) {
   };
 
   // ── Basics ────────────────────────────────────────────────────
-  const nameInput = form.querySelector('.input.mono');
+  const nameInput = document.getElementById('output-name-input') ?? form.querySelector('.input.mono');
   if (nameInput) nameInput.value = cfg.output_name ?? '';
 
   const archLabel = Object.entries(ARCH_MAP).find(([, v]) => v === cfg.architecture)?.[0];
@@ -865,9 +1036,29 @@ function _applyConfigToForm(cfg) {
     if (vaeInp) vaeInp.value = cfg.vae || '';
   }
 
-  // Resolution buttons
+  // Resolution buttons — try preset first, fall back to custom inputs
   if (cfg.resolution) {
-    setActiveBtn('.form-row:has(.bucket-strip) .row-flex', cfg.resolution.split(',')[0]);
+    const [w, h] = cfg.resolution.split(',');
+    const presetMatch = ['512', '768', '1024'].includes(w) && w === h;
+    if (presetMatch) {
+      setActiveBtn('#resolution-btns', w);
+      const customDiv = document.getElementById('custom-res-inputs');
+      if (customDiv) customDiv.style.display = 'none';
+    } else {
+      // Custom resolution
+      ['512', '768', '1024'].forEach((v) => {
+        const btns = form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)');
+        btns.forEach((b) => b.classList.remove('primary'));
+      });
+      const customBtn = document.getElementById('custom-res-btn');
+      if (customBtn) customBtn.classList.add('primary');
+      const customDiv = document.getElementById('custom-res-inputs');
+      if (customDiv) customDiv.style.display = '';
+      const wEl = document.getElementById('custom-res-w');
+      const hEl = document.getElementById('custom-res-h');
+      if (wEl) wEl.value = w ?? '';
+      if (hEl) hEl.value = h ?? '';
+    }
   }
 
   setCheckbox('enable_bucket', cfg.enable_bucket);
@@ -904,9 +1095,20 @@ function _applyConfigToForm(cfg) {
 
   // ── Memory ────────────────────────────────────────────────────
   setActiveBtn('[data-pane="memory"] .form-row:first-child .row-flex', cfg.mixed_precision);
+  setCheckbox('full_fp16', cfg.full_fp16);
+  setCheckbox('full_bf16', cfg.full_bf16);
+  setCheckbox('fp8_base', cfg.fp8_base ?? false);
   setCheckbox('gradient_checkpointing', cfg.gradient_checkpointing);
-  setCheckbox('xformers', cfg.xformers);
+  setCheckbox('xformers', cfg.xformers ?? false);
+  setCheckbox('sdpa', cfg.sdpa);
+  setCheckbox('mem_eff_attn', cfg.mem_eff_attn);
+  setCheckbox('lowram', cfg.lowram);
+  setCheckbox('highvram', cfg.highvram);
   setCheckbox('cache_latents', cfg.cache_latents);
+  setCheckbox('cache_latents_to_disk', cfg.cache_latents_to_disk);
+  setCheckbox('cache_text_encoder_outputs', cfg.cache_text_encoder_outputs);
+  setCheckbox('cache_text_encoder_outputs_to_disk', cfg.cache_text_encoder_outputs_to_disk);
+  setByLabel('vae_batch_size', cfg.vae_batch_size);
 
   // ── Sampling ──────────────────────────────────────────────────
   setByLabel('every_n_steps', cfg.sample_every_n_steps);
@@ -953,24 +1155,33 @@ async function mountJobs() {
 
 async function renderJobs() {
   try {
+    // Clear placeholder immediately so stale template data doesn't flash
+    const jobNow = document.querySelector('.job-now');
+    if (jobNow) jobNow.innerHTML = '<div class="empty">Loading…</div>';
+
     _jobsData = await api.jobs();
-    const { jobs, active_job_id, queue } = _jobsData;
+    const { jobs, active_job_id } = _jobsData;
 
     // Now-training panel
     const activeJob = jobs.find((j) => j.id === active_job_id);
-    const jobNow = document.querySelector('.job-now');
     if (jobNow && activeJob) {
       const pct = activeJob.total_steps > 0 ? (activeJob.step / activeJob.total_steps) * 100 : 0;
+      const remaining = activeJob.throughput && activeJob.total_steps > activeJob.step
+        ? (activeJob.total_steps - activeJob.step) / activeJob.throughput : null;
+      const etaStr = remaining ? fmtDuration(remaining) : '—';
+      const startedStr = activeJob.started_at
+        ? new Date(activeJob.started_at * 1000).toLocaleTimeString() : '—';
       jobNow.innerHTML = `
         <div>
           <div class="job-title">${esc(activeJob.output_name)}</div>
-          <div class="mono job-meta">${esc(activeJob.architecture?.toUpperCase())} · ${esc(activeJob.mode)} · ${esc(activeJob.optimizer_type ?? '')} · PID ${activeJob.pid ?? '—'}</div>
+          <div class="mono job-meta">${esc(activeJob.architecture?.toUpperCase())} · ${esc(activeJob.mode)} · started ${startedStr} · PID ${activeJob.pid ?? '—'}</div>
           <div class="job-progress">
             <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
             <div class="job-steps mono">
-              <span>step <b>${activeJob.step.toLocaleString()}</b> / ${activeJob.total_steps.toLocaleString()}</span>
+              <span><b>${fmtStep(activeJob.step, activeJob.total_steps, activeJob.max_train_epochs)}</b></span>
               <span>loss <b>${activeJob.loss?.toFixed(4) ?? '—'}</b></span>
               <span>${activeJob.throughput?.toFixed(2) ?? '—'} it/s</span>
+              <span>ETA ${etaStr}</span>
             </div>
           </div>
         </div>`;
@@ -978,9 +1189,28 @@ async function renderJobs() {
       jobNow.innerHTML = `<div class="empty">No job currently running</div>`;
     }
 
+    // Wire jobs-page Stop button
+    const jobsStopBtn = document.getElementById('jobs-stop-btn');
+    if (jobsStopBtn) {
+      jobsStopBtn.onclick = null;
+      if (active_job_id) {
+        jobsStopBtn.disabled = false;
+        jobsStopBtn.addEventListener('click', async () => {
+          await api.cancelJob(active_job_id);
+          toast('Training stopped', 'success');
+          await renderJobs();
+        });
+      } else {
+        jobsStopBtn.disabled = true;
+      }
+    }
+
     // Queued jobs
-    const queuePanel = document.querySelector('.panel:nth-child(2) .panel-b');
+    const queuePanel = document.getElementById('queued-panel-body');
     const queuedJobs = jobs.filter((j) => j.status === 'queued');
+    // Update queued badge
+    const queueBadge = document.getElementById('queued-panel-badge');
+    if (queueBadge) queueBadge.textContent = queuedJobs.length || '';
     if (queuePanel) {
       if (queuedJobs.length) {
         queuePanel.innerHTML = queuedJobs.map((j, i) => `
@@ -1042,32 +1272,104 @@ async function renderJobs() {
 
 sock.on('queue_update', () => { if (router.current === 'jobs') renderJobs(); });
 
+
 // ═══════════════════════════════════════════════════════════════
 // Page: Live Monitor
 // ═══════════════════════════════════════════════════════════════
 let _autoScroll = true;
 const _lossHistory = [];
 
+let _sampleInterval = null;
+let _sampleGroups = [];   // [{step: N|null, paths: [...]}], sorted ascending by step
+let _sampleGroupIdx = 0; // which group is currently shown
+let _sampleEveryNSteps = 0; // from active job config, used by job_status handler
+
+function _parseSampleStep(filename) {
+  // sd-scripts naming: {name}_e000001_s000500_00.png
+  const m = filename.match(/_s(\d+)_\d+\.\w+$/i);
+  if (m) return parseInt(m[1], 10);
+  // fallback: any 6-digit number before extension
+  const m2 = filename.match(/_(\d{6})\.\w+$/);
+  if (m2) return parseInt(m2[1], 10);
+  return null;
+}
+
+function _renderSampleGroup() {
+  const grid = document.getElementById('sample-grid-big');
+  const stepLabel = document.getElementById('samples-step-label');
+  const prevBtn = document.getElementById('samples-prev-btn');
+  const nextBtn = document.getElementById('samples-next-btn');
+  if (!grid) return;
+  if (!_sampleGroups.length) {
+    grid.innerHTML = '<div class="empty" style="padding:24px">No samples yet</div>';
+    if (stepLabel) stepLabel.textContent = '—';
+    if (prevBtn) prevBtn.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
+    return;
+  }
+  const group = _sampleGroups[_sampleGroupIdx];
+  grid.innerHTML = group.paths.map((p) =>
+    `<img src="/api/jobs/image?path=${encodeURIComponent(p)}" class="sample-thumb" loading="lazy" style="max-width:100%;border-radius:4px;"/>`
+  ).join('');
+  if (stepLabel) {
+    stepLabel.textContent = group.step != null
+      ? `step ${group.step.toLocaleString()} (${_sampleGroupIdx + 1} / ${_sampleGroups.length})`
+      : `batch ${_sampleGroupIdx + 1} / ${_sampleGroups.length}`;
+  }
+  if (prevBtn) prevBtn.disabled = _sampleGroupIdx <= 0;
+  if (nextBtn) nextBtn.disabled = _sampleGroupIdx >= _sampleGroups.length - 1;
+}
+
 async function mountLogs() {
-  // Find the active or most recent job
+  // Clear any previous sample polling
+  if (_sampleInterval) { clearInterval(_sampleInterval); _sampleInterval = null; }
+  _sampleGroups = [];
+  _sampleGroupIdx = 0;
+  _sampleEveryNSteps = 0;
+  _lossHistory.length = 0;
+
   try {
     const { jobs, active_job_id } = await api.jobs();
-    const activeJob = active_job_id ? jobs.find((j) => j.id === active_job_id) : jobs[0];
+    const activeJob = active_job_id
+      ? jobs.find((j) => j.id === active_job_id)
+      : jobs.find((j) => ['running', 'starting', 'completed', 'failed', 'interrupted'].includes(j.status));
 
-    // Stats header
     const page = document.getElementById('page');
-    const h1 = page?.querySelector('h1');
-    if (h1 && activeJob) {
-      h1.innerHTML = `Live monitor · <span class="mono" style="color:var(--accent)">${esc(activeJob.output_name)}</span>`;
+
+    // Header
+    const titleEl = document.getElementById('logs-title');
+    if (titleEl && activeJob) {
+      titleEl.innerHTML = `Live monitor · <span class="mono" style="color:var(--accent)">${esc(activeJob.output_name)}</span>`;
     }
 
     // Stop button
     page?.querySelectorAll('.btn.danger').forEach((btn) => {
-      if (btn.textContent.includes('Stop')) {
+      if (btn.textContent.trim() === 'Stop') {
         btn.addEventListener('click', async () => {
           if (active_job_id) {
             await api.cancelJob(active_job_id);
             toast('Training stopped', 'success');
+          }
+        });
+      }
+    });
+
+    // TensorBoard button
+    page?.querySelectorAll('.btn').forEach((btn) => {
+      if (btn.textContent.includes('TensorBoard') && activeJob) {
+        btn.addEventListener('click', async () => {
+          try {
+            btn.disabled = true;
+            btn.textContent = 'Starting…';
+            const cfg = activeJob.config ?? {};
+            const logDir = `${cfg.output_dir ?? 'output'}/${activeJob.output_name}/logs`;
+            const { url } = await api.post('/api/utilities/tensorboard/start', { logdir: logDir });
+            window.open(url, '_blank');
+          } catch (e) {
+            toast('TensorBoard failed to start', 'error');
+          } finally {
+            btn.disabled = false;
+            btn.textContent = 'Open TensorBoard';
           }
         });
       }
@@ -1082,11 +1384,8 @@ async function mountLogs() {
     // Download log button
     page?.querySelectorAll('.btn').forEach((btn) => {
       if (btn.textContent.includes('Download log') && activeJob) {
-        btn.addEventListener('click', () => {
-          window.open(`/api/jobs/${activeJob.id}/log`, '_blank');
-        });
+        btn.addEventListener('click', () => window.open(`/api/jobs/${activeJob.id}/log`, '_blank'));
       }
-      // Wrap button
       if (btn.textContent.trim() === 'Wrap') {
         btn.addEventListener('click', () => {
           const con = document.getElementById('console');
@@ -1098,14 +1397,77 @@ async function mountLogs() {
       }
     });
 
-    // Load existing log
     if (activeJob) {
+      _sampleEveryNSteps = activeJob.config?.sample_every_n_steps ?? 0;
+
+      // Wire prev/next sample group buttons
+      document.getElementById('samples-prev-btn')?.addEventListener('click', () => {
+        if (_sampleGroupIdx > 0) { _sampleGroupIdx--; _renderSampleGroup(); }
+      });
+      document.getElementById('samples-next-btn')?.addEventListener('click', () => {
+        if (_sampleGroupIdx < _sampleGroups.length - 1) { _sampleGroupIdx++; _renderSampleGroup(); }
+      });
+
+      // Load loss history
       const full = await api.getJob(activeJob.id);
       if (full.loss_history?.length) {
         _lossHistory.push(...full.loss_history);
         renderLossChart('loss-chart-big', 'loss-fill2', 'loss-line2', _lossHistory);
       }
+
+      // Load historical log buffer
+      try {
+        const logText = await fetch(`/api/jobs/${activeJob.id}/log`).then((r) => r.text());
+        const console_ = document.getElementById('console');
+        if (console_ && logText.trim()) {
+          logText.split('\n').forEach((line) => {
+            if (!line) return;
+            const div = document.createElement('div');
+            div.textContent = line;
+            if (/error|exception/i.test(line)) div.style.color = 'var(--danger)';
+            else if (/warning/i.test(line)) div.style.color = 'var(--warn)';
+            console_.appendChild(div);
+          });
+          console_.scrollTop = console_.scrollHeight;
+        }
+      } catch {}
+
+      // Load sample images
+      await _refreshSamples(activeJob.id);
+
+      // Poll samples every 30s while on logs page
+      _sampleInterval = setInterval(() => {
+        if (router.current === 'logs') _refreshSamples(activeJob.id);
+        else { clearInterval(_sampleInterval); _sampleInterval = null; }
+      }, 30000);
     }
+  } catch (e) { console.error('mountLogs:', e); }
+}
+
+async function _refreshSamples(jobId) {
+  try {
+    const { samples } = await api.get(`/api/jobs/${jobId}/samples`);
+    // Group images by step parsed from filename
+    const byStep = new Map();
+    for (const p of samples) {
+      const filename = p.replace(/\\/g, '/').split('/').pop() ?? '';
+      const step = _parseSampleStep(filename);
+      const key = step ?? '__unknown__';
+      if (!byStep.has(key)) byStep.set(key, []);
+      byStep.get(key).push(p);
+    }
+    const wasAtEnd = !_sampleGroups.length || _sampleGroupIdx >= _sampleGroups.length - 1;
+    _sampleGroups = [...byStep.entries()]
+      .sort(([a], [b]) => {
+        if (a === '__unknown__') return 1;
+        if (b === '__unknown__') return -1;
+        return Number(a) - Number(b);
+      })
+      .map(([key, paths]) => ({ step: key === '__unknown__' ? null : Number(key), paths }));
+    // Auto-advance to newest group if user was already at the end
+    if (wasAtEnd && _sampleGroups.length > 0) _sampleGroupIdx = _sampleGroups.length - 1;
+    _sampleGroupIdx = Math.max(0, Math.min(_sampleGroupIdx, _sampleGroups.length - 1));
+    _renderSampleGroup();
   } catch {}
 }
 
@@ -1131,11 +1493,36 @@ sock.on('job_status', (msg) => {
     if (_lossHistory.length > 2000) _lossHistory.shift();
     renderLossChart('loss-chart-big', 'loss-fill2', 'loss-line2', _lossHistory);
   }
-  // Update stat cards
-  const cards = document.querySelectorAll('.stat-card .v');
-  if (cards[0]) cards[0].innerHTML = `${msg.loss?.toFixed(3) ?? '—'}<small>↓</small>`;
-  if (cards[1]) cards[1].innerHTML = `<span class="mono" style="font-size:18px">${msg.lr?.toExponential(1) ?? '—'}</span>`;
-  if (cards[3]) cards[3].innerHTML = `${msg.throughput?.toFixed(2) ?? '—'}<small>it/s</small>`;
+  // Update named stat card elements
+  const lossEl = document.getElementById('logs-loss-val');
+  const lrEl = document.getElementById('logs-lr-val');
+  const thruEl = document.getElementById('logs-thru-val');
+  if (lossEl) lossEl.innerHTML = `${msg.loss?.toFixed(3) ?? '—'}<small>↓</small>`;
+  if (lrEl) lrEl.innerHTML = `<span class="mono" style="font-size:18px">${msg.lr?.toExponential(2) ?? '—'}</span>`;
+  if (thruEl) thruEl.innerHTML = `${msg.throughput?.toFixed(2) ?? '—'}<small>it/s</small>`;
+  // Update subtitle
+  const sub = document.getElementById('logs-subtitle');
+  if (sub && msg.total_steps > 0) {
+    const remaining = msg.throughput && msg.total_steps > msg.step
+      ? (msg.total_steps - msg.step) / msg.throughput : null;
+    const etaStr = remaining ? fmtDuration(remaining) : '—';
+    sub.textContent = `${fmtStep(msg.step, msg.total_steps, msg.max_train_epochs)} · ${msg.throughput?.toFixed(2) ?? '—'} it/s · ETA ${etaStr}`;
+  }
+  // Sample panel header: training progress
+  const samplesStep = document.getElementById('logs-samples-step');
+  if (samplesStep && msg.total_steps > 0) {
+    samplesStep.textContent = `step ${(msg.step ?? 0).toLocaleString()} / ${msg.total_steps.toLocaleString()}`;
+  }
+  // "next sample at step N"
+  const nextLabel = document.getElementById('samples-next-label');
+  if (nextLabel) {
+    if (_sampleEveryNSteps > 0 && msg.step != null) {
+      const next = Math.ceil((msg.step + 1) / _sampleEveryNSteps) * _sampleEveryNSteps;
+      nextLabel.textContent = `next sample at step ${next.toLocaleString()}`;
+    } else {
+      nextLabel.textContent = '—';
+    }
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1169,13 +1556,23 @@ async function mountModels() {
         </div>`).join('');
     }
 
+    // Populate filter pill counts
+    const archCounts = {};
+    models.forEach((m) => { const a = m.arch ?? 'sd15'; archCounts[a] = (archCounts[a] ?? 0) + 1; });
+    document.querySelectorAll('#model-filter-pills .btn[data-filter]').forEach((btn) => {
+      const f = btn.dataset.filter;
+      const count = f === 'all' ? models.length : (archCounts[f] ?? 0);
+      const span = btn.querySelector('.model-count');
+      if (span) span.textContent = count;
+    });
+
     // Filter buttons (arch pills)
-    document.querySelectorAll('#page .row-flex .btn.sm').forEach((btn) => {
+    document.querySelectorAll('#model-filter-pills .btn[data-filter]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('#page .row-flex .btn.sm').forEach((b) => b.classList.remove('primary'));
+        document.querySelectorAll('#model-filter-pills .btn').forEach((b) => b.classList.remove('primary'));
         btn.classList.add('primary');
-        const archWord = btn.textContent.trim().split(' ')[0].toLowerCase().replace('.', '');
-        _filtered = archWord === 'all' ? models : models.filter((m) => (m.arch ?? '').toLowerCase() === archWord);
+        const f = btn.dataset.filter;
+        _filtered = f === 'all' ? models : models.filter((m) => (m.arch ?? 'sd15').toLowerCase() === f);
         const q = document.querySelector('#page .search-wrap .input')?.value?.toLowerCase() ?? '';
         renderCards(q ? _filtered.filter((m) => m.name.toLowerCase().includes(q)) : _filtered);
       });
@@ -1469,4 +1866,5 @@ window.showLog = showLog;
 // ═══════════════════════════════════════════════════════════════
 // Boot
 // ═══════════════════════════════════════════════════════════════
+refreshNavCounts();
 router.navigate('train');

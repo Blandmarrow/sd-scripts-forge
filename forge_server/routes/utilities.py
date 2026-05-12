@@ -1,12 +1,14 @@
 """One-shot utility script runner."""
 from __future__ import annotations
 import asyncio
+import subprocess
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Any
 
 router = APIRouter(prefix="/api/utilities")
 _settings = None
+_tensorboard_proc: subprocess.Popen | None = None
 
 
 def init(settings):
@@ -32,6 +34,39 @@ class UtilityRequest(BaseModel):
 @router.get("/tools")
 async def list_tools():
     return {"tools": list(TOOL_MAP.keys())}
+
+
+class TensorboardRequest(BaseModel):
+    logdir: str = "output"
+    port: int = 6006
+
+
+@router.post("/tensorboard/start")
+async def start_tensorboard(body: TensorboardRequest):
+    global _tensorboard_proc
+    port = body.port
+
+    # Reuse if already running on the same port
+    if _tensorboard_proc is not None and _tensorboard_proc.poll() is None:
+        return {"url": f"http://localhost:{port}", "status": "already_running"}
+
+    try:
+        _tensorboard_proc = subprocess.Popen(
+            [_settings.python_executable, "-m", "tensorboard.main",
+             "--logdir", body.logdir, "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        raise HTTPException(500, "tensorboard not found — install it with: pip install tensorboard")
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to launch TensorBoard: {exc}")
+
+    await asyncio.sleep(1.5)
+    if _tensorboard_proc.poll() is not None:
+        raise HTTPException(500, "TensorBoard exited immediately — check logdir path")
+
+    return {"url": f"http://localhost:{port}", "status": "started"}
 
 
 @router.post("/run")

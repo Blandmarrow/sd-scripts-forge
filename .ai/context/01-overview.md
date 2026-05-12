@@ -99,17 +99,17 @@ The web UI is a FastAPI server (`forge_server/`) that wraps the CLI training scr
 - **`forge.py`**: Entry point — runs uvicorn
 - **`forge_server/main.py`**: FastAPI app, lifespan (job queue + GPU stats push)
 - **`forge_server/schemas.py`**: `TrainingConfig` Pydantic model covering all training parameters
-- **`forge_server/command_builder.py`**: Maps `TrainingConfig` → `accelerate launch` argv. `SCRIPT_MAP` dict controls the `(architecture, mode) → script` routing. **Update this when adding new model support.**
+- **`forge_server/command_builder.py`**: Maps `TrainingConfig` → `accelerate launch` argv. `SCRIPT_MAP` dict controls the `(architecture, mode) → script` routing. **Update this when adding new model support.** `cache_text_encoder_outputs` / `cache_text_encoder_outputs_to_disk` are automatically suppressed when `text_encoder_lr` is set (the two options are mutually exclusive in sd-scripts).
 - **`forge_server/job_store.py`**: In-memory job store with `forge_jobs.json` persistence
-- **`forge_server/job_runner.py`**: Async subprocess runner, tqdm parsing, Windows process-tree kill. Also handles pre-launch setup: `_prepare_sample_prompts()` writes inline `sample_prompts_text` to `{output_dir}/sample_prompts.txt` before the subprocess starts.
+- **`forge_server/job_runner.py`**: Async subprocess runner, tqdm parsing, Windows process-tree kill. Reads stdout in 4 KB chunks and normalises `\r` to `\n` so tqdm per-step progress lines are captured (not just epoch-end newlines); `job_status` broadcasts are throttled to 0.5 s. Also handles pre-launch setup: `_prepare_sample_prompts()` writes inline `sample_prompts_text` to `{output_dir}/sample_prompts.txt` before the subprocess starts.
 - **`forge_server/routes/`**: REST API + WebSocket `/ws`
-  - `jobs.py` — `/api/jobs` CRUD + queue management
+  - `jobs.py` — `/api/jobs` CRUD + queue management; `GET /api/jobs/image?path=` serves sample images by absolute path (registered before `/{job_id}` to avoid route shadowing); `GET /{id}/log` returns the log buffer as plain text; `GET /{id}/samples` returns absolute paths of generated sample images grouped by step
   - `cli.py` — `/api/cli-preview` (dry-run argv preview)
   - `files.py` — `/api/models`, `/api/loras`, `/api/datasets` (filesystem scanning). Dataset scanner detects sd-scripts roots recursively: a directory is a dataset root if it contains `{N}_{name}` repeat-named subdirectories.
   - `system.py` — `/api/system/stats` (GPU via nvidia-smi, disk usage)
   - `settings_route.py` — `/api/settings` GET/POST (reads/writes `forge_config.json`)
   - `utilities.py` — `/api/utilities/run` (one-shot subprocess runner for merge/resize/extract scripts); `/api/utilities/tools` lists available tools
-  - `ws.py` — WebSocket `/ws` with `ConnectionManager`; broadcasts `queue_update` and `system_stats` events
+  - `ws.py` — WebSocket `/ws` with `ConnectionManager`; broadcasts `queue_update`, `system_stats` (GPU/disk, ~2 s interval), `job_status` (step/loss/lr/throughput/total_steps, throttled to 0.5 s during training), and `log_line` (individual log lines, tqdm progress lines excluded)
 - **`forge.css`** / **`forge.js`**: SPA frontend (no build step, vanilla JS + custom CSS)
 - **`forge_config.json`**: User-editable server config (`sd_scripts_root`, `python_executable`, `models_dir`, `datasets_dir`, `output_dir`, `server_host`, `server_port`, `cpu_threads`, `default_mixed_precision`)
 
@@ -127,13 +127,14 @@ When a new model family is added to sd-scripts, also update:
 ### Forge Frontend SPA Conventions
 - Page templates live as `<template id="tpl-{page}">` elements; the JS router clones them into `#page` on navigation.
 - Each page has a corresponding `mount{Page}()` function registered in `pageControllers` in `forge.js`.
-- `sock.on(type, handler)` stores **one handler per type** — a second call with the same type overwrites the first. Keep global WebSocket handlers (e.g. `system_stats` for the sidebar GPU meter) in one place.
+- `sock.on(type, handler)` supports **multiple handlers per type** — each call pushes a new handler into an array; all are called on each matching message. Global handlers (e.g. `system_stats` for the sidebar GPU meter) are registered at module level; page-specific handlers are registered inside the `mount*()` function.
 - `collectFormState()` reads the train form into a `TrainingConfig`-shaped object; always update it when adding new form fields.
 - `_applyConfigToForm(cfg)` is the inverse of `collectFormState()` — it restores all form fields from a config object, covering every tab (basics, network, schedule, memory, sampling, advanced). When adding new model-specific fields, update **both** functions. Use the internal `setActiveBtn`, `setByLabel`, and `setCheckbox` helpers rather than direct querySelector where possible.
 - `_pendingEdit` (module-level) passes a job config from the Jobs page → `mountTrain()` for pre-population.
 - Utility scripts are invoked via `POST /api/utilities/run` with `{tool, args}` — no job queue; result returned inline.
 - **User presets** are stored in `localStorage` under key `forge_presets` (object keyed by preset name). The preset popover calls `collectFormState()` on save and `_applyConfigToForm()` on load. The VAE override checkbox requires `dispatchEvent(new Event('change'))` after setting `.checked` so the `mountTrain` listener can update the input's `disabled` state.
 - **Sample prompts**: users type prompts inline in `#sample-prompts-textarea` (one per line). Width/height/steps/guidance/negative inputs provide defaults that `collectFormState()` appends as `--w --h --s --l --n` directives. The combined text is sent as `sample_prompts_text`; `job_runner.py` writes it to a file. `collectFormState()` also stores the raw textarea text as `sample_prompts_raw` and the individual dimension/step/guidance/negative values separately so `_applyConfigToForm()` can round-trip them correctly. If the textarea is empty, `sample_every_n_steps` and `sample_every_n_epochs` are not sent — omitting these when `--sample_prompts` is absent would crash the training script.
+- **Live monitor** (`mountLogs`): on mount it loads loss history, the log buffer, and sample images; polls samples every 30 s while on the page. Module-level state: `_lossHistory`, `_sampleGroups` (images grouped by step parsed from the sd-scripts filename pattern `_s{step:06d}_`), `_sampleGroupIdx` (current group), `_sampleEveryNSteps` (from `activeJob.config.sample_every_n_steps`, used to calculate "next sample at step N"). The `job_status` WebSocket handler updates the loss chart, stat cards, subtitle, sample-panel header step counter, and next-sample label. Serving sample images uses `GET /api/jobs/image?path=<absolute>` rather than the static mount so paths outside `sd_scripts_root` work correctly.
 
 ## Development Notes
 
