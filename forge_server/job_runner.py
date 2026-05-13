@@ -5,7 +5,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Awaitable
+from typing import TYPE_CHECKING, Callable, Awaitable, List
 
 from . import command_builder
 from .job_store import Job, JobStore
@@ -22,6 +22,51 @@ _TQDM_RE = re.compile(
 # Broader loss-only pattern for non-tqdm log lines
 _LOSS_RE  = re.compile(r"\bloss[=:\s]+([0-9]+\.[0-9]+)", re.IGNORECASE)
 _LR_RE    = re.compile(r"\blr[=:\s]+([0-9]+\.?[0-9]*(?:e[+-]?[0-9]+)?)", re.IGNORECASE)
+_REPEAT_RE = re.compile(r"^(\d+)_")
+
+
+def _discover_subsets(train_data_dir: str) -> List[dict]:
+    """Return [{image_dir, num_repeats}] from {N}_{name} subdirs, falling back to the dir itself."""
+    base = Path(train_data_dir)
+    if not base.is_dir():
+        return [{"image_dir": train_data_dir, "num_repeats": 1}]
+    subsets = []
+    for sub in sorted(base.iterdir()):
+        if sub.is_dir():
+            m = _REPEAT_RE.match(sub.name)
+            if m:
+                subsets.append({"image_dir": str(sub), "num_repeats": int(m.group(1))})
+    return subsets or [{"image_dir": train_data_dir, "num_repeats": 1}]
+
+
+def _build_dataset_toml(cfg) -> str:
+    """Generate a multi-resolution TOML dataset config string."""
+    subsets = _discover_subsets(cfg.train_data_dir)
+    lines = []
+    for res_str in cfg.resolutions:
+        parts = [p.strip() for p in res_str.split(",")]
+        w = int(parts[0])
+        h = int(parts[1]) if len(parts) > 1 else w
+        lines.append("[[datasets]]")
+        lines.append(f"  resolution = {w}" if w == h else f"  resolution = [{w}, {h}]")
+        if cfg.enable_bucket:
+            lines.append("  enable_bucket = true")
+            if cfg.bucket_no_upscale:
+                lines.append("  bucket_no_upscale = true")
+            lines.append(f"  min_bucket_reso = {cfg.min_bucket_reso}")
+            lines.append(f"  max_bucket_reso = {cfg.max_bucket_reso}")
+        lines.append("")
+        for subset in subsets:
+            lines.append("  [[datasets.subsets]]")
+            lines.append(f'    image_dir = "{subset["image_dir"]}"')
+            lines.append(f'    num_repeats = {subset["num_repeats"]}')
+            lines.append(f'    caption_extension = "{cfg.caption_extension}"')
+            if cfg.shuffle_caption:
+                lines.append("    shuffle_caption = true")
+            if cfg.keep_tokens and cfg.keep_tokens > 0:
+                lines.append(f"    keep_tokens = {cfg.keep_tokens}")
+            lines.append("")
+    return "\n".join(lines)
 
 
 class JobRunner:
@@ -85,6 +130,29 @@ class JobRunner:
             return cfg
         return cfg.model_copy(update={"sample_prompts": str(prompts_file), "sample_prompts_text": None})
 
+    def _prepare_dataset_config(self, job: Job, cfg=None):
+        """If multiple resolutions are selected, write a TOML dataset config and return updated cfg."""
+        if cfg is None:
+            cfg = job.training_config
+        if len(cfg.resolutions) <= 1:
+            return cfg
+        if not cfg.train_data_dir:
+            return cfg
+        out_dir = Path(cfg.output_dir)
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        toml_path = out_dir / "dataset_config.toml"
+        try:
+            toml_content = _build_dataset_toml(cfg)
+            toml_path.write_text(toml_content, encoding="utf-8")
+        except Exception as exc:
+            self._store.append_log(job, f"[Forge] Could not write dataset config TOML: {exc}")
+            return cfg
+        self._store.append_log(job, f"[Forge] Multi-resolution dataset config written: {toml_path}")
+        return cfg.model_copy(update={"dataset_config": str(toml_path), "train_data_dir": ""})
+
     async def _execute(self, job: Job):
         self._active = job
         self._store.update(job, status="starting", started_at=time.time())
@@ -92,6 +160,7 @@ class JobRunner:
 
         try:
             cfg = self._prepare_sample_prompts(job)
+            cfg = self._prepare_dataset_config(job, cfg)
             script_args = command_builder.build(cfg, self._settings)
             prefix = command_builder.build_accelerate_prefix(self._settings)
             full_cmd = prefix + script_args

@@ -356,10 +356,10 @@
           <div class="form-row">
             <div class="lbl-col"><h4>Resolution &amp; bucketing</h4><p>Aspect-ratio bucketing fits your dataset's distribution without cropping.</p></div>
             <div>
-              <div class="row-flex" id="resolution-btns">
-                <button class="btn sm primary">512</button>
+              <div class="row-flex" id="resolution-btns" data-multiselect="true">
+                <button class="btn sm">512</button>
                 <button class="btn sm">768</button>
-                <button class="btn sm">1024</button>
+                <button class="btn sm primary">1024</button>
                 <button class="btn sm" id="custom-res-btn">Custom…</button>
                 <span style="color:var(--fg-soft)">·</span>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked/> <span>enable_bucket</span></label>
@@ -417,9 +417,9 @@
             <div class="form-row">
               <div class="lbl-col"><h4>Target</h4><p>Which parts of the model receive the adapter.</p></div>
               <div class="row-flex">
-                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked /> <span>train UNet</span></label>
-                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked /> <span>train text encoder</span></label>
-                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>train T5XXL (FLUX)</span></label>
+                <label class="row-flex" style="gap:6px"><input type="checkbox" id="target-unet" class="checkbox" checked /> <span>train UNet</span></label>
+                <label class="row-flex" style="gap:6px"><input type="checkbox" id="target-te" class="checkbox" checked /> <span>train text encoder</span></label>
+                <label class="row-flex" style="gap:6px"><input type="checkbox" id="target-t5xxl" class="checkbox" /> <span>train T5XXL (FLUX)</span></label>
               </div>
               <div class="row-flex" style="margin-top: 10px;">
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>attn only</span></label>
@@ -641,6 +641,31 @@
               <div class="row-flex" style="margin-top: 10px;">
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>multires_noise_iterations = 6</span></label>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" /> <span>multires_noise_discount = 0.3</span></label>
+              </div>
+            </div>
+
+            <div class="form-row" id="dit-weighting-row" style="display:none;">
+              <div class="lbl-col"><h4>Weighting scheme</h4><p>Timestep loss weighting for DiT models (FLUX, SD3, Lumina, HunyuanImage, Anima). Default is <span class="mono">uniform</span>.</p></div>
+              <div>
+                <div class="row-flex" id="weighting-scheme-btns">
+                  <button class="btn sm primary">uniform</button>
+                  <button class="btn sm">sigma_sqrt</button>
+                  <button class="btn sm">logit_normal</button>
+                  <button class="btn sm">mode</button>
+                  <button class="btn sm">cosmap</button>
+                  <button class="btn sm">none</button>
+                </div>
+                <div id="logit-normal-params" style="display:none; margin-top:10px;">
+                  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; max-width: 360px;">
+                    <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">logit_mean</span><input class="input mono" value="0.0" /></label>
+                    <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">logit_std</span><input class="input mono" value="1.0" /></label>
+                  </div>
+                </div>
+                <div id="mode-scale-param" style="display:none; margin-top:10px;">
+                  <div style="display:grid; grid-template-columns: 1fr; gap:10px; max-width: 180px;">
+                    <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">mode_scale</span><input class="input mono" value="1.29" /></label>
+                  </div>
+                </div>
               </div>
             </div>
 

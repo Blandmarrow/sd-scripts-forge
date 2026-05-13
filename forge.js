@@ -297,16 +297,18 @@ function collectFormState() {
   const vaeOverride = form.querySelector('[name="use_vae_override"]')?.checked;
   const vaeVal = document.getElementById('vae-input')?.value || undefined;
 
-  // Custom resolution: use custom-res-w/h inputs if visible
+  // Multi-resolution: collect all toggled preset buttons + optional custom entry
+  const resBtnEls = [...(document.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)'))];
+  const selectedPresets = resBtnEls.filter((b) => b.classList.contains('primary')).map((b) => {
+    const n = b.textContent.trim();
+    return `${n},${n}`;
+  });
   const customResDiv = document.getElementById('custom-res-inputs');
   const useCustomRes = customResDiv && customResDiv.style.display !== 'none';
   const customW = document.getElementById('custom-res-w')?.value?.trim();
   const customH = document.getElementById('custom-res-h')?.value?.trim();
-  const resValue = useCustomRes && customW && customH
-    ? `${customW},${customH}`
-    : (activeBtn('.form-row:has(.bucket-strip)').match(/^\d+$/)
-        ? `${activeBtn('.form-row:has(.bucket-strip)')},${ activeBtn('.form-row:has(.bucket-strip)')}`
-        : '1024,1024');
+  if (useCustomRes && customW && customH) selectedPresets.push(`${customW},${customH}`);
+  const resolutions = selectedPresets.length ? selectedPresets : ['1024,1024'];
 
   return {
     output_name: outputName,
@@ -316,7 +318,7 @@ function collectFormState() {
     checkpoint: form.querySelector('#ckpt-select')?.value ?? '',
     vae: vaeOverride ? vaeVal : undefined,
     train_data_dir: document.getElementById('ds-select')?.value ?? '',
-    resolution: resValue,
+    resolutions,
     enable_bucket: checked('[name="enable_bucket"], input[type=checkbox][class=checkbox]:nth-of-type(1)'),
     bucket_no_upscale: true,
     shuffle_caption: checked('[name="shuffle_caption"]'),
@@ -329,6 +331,8 @@ function collectFormState() {
     })(),
     network_dim: parseInt(getByLabel('network_dim') || '32') || 32,
     network_alpha: parseFloat(getByLabel('network_alpha') || '16') || 16,
+    network_train_unet_only: getCheckbox('target-unet') && !getCheckbox('target-te'),
+    network_train_text_encoder_only: getCheckbox('target-te') && !getCheckbox('target-unet'),
     optimizer_type: activeBtn('[data-pane="schedule"] .form-row:first-child .row-flex') || 'AdamW8bit',
     learning_rate: parseFloat(getByLabel('learning_rate') || '1e-4') || 1e-4,
     unet_lr: parseFloat(getByLabel('unet_lr')) || undefined,
@@ -388,6 +392,11 @@ function collectFormState() {
     // Anima-specific
     qwen3: arch === 'anima' ? (document.getElementById('qwen3-input')?.value || undefined) : undefined,
     t5_tokenizer_path: arch === 'anima' ? (document.getElementById('t5-tokenizer-input')?.value || undefined) : undefined,
+    // DiT weighting scheme
+    weighting_scheme: document.getElementById('weighting-scheme-btns')?.querySelector('.btn.primary')?.textContent?.trim() || 'uniform',
+    logit_mean: (() => { const n = parseFloat(getByLabel('logit_mean')); return isNaN(n) ? 0.0 : n; })(),
+    logit_std: (() => { const n = parseFloat(getByLabel('logit_std')); return isNaN(n) ? 1.0 : n; })(),
+    mode_scale: (() => { const n = parseFloat(getByLabel('mode_scale')); return isNaN(n) ? 1.29 : n; })(),
   };
 }
 
@@ -672,11 +681,14 @@ async function mountTrain() {
 
   // Architecture pills
   const archStrip = form.querySelector('.arch-strip');
+  const _DIT_ARCHS = new Set(['flux', 'sd3', 'lumina', 'hunyuan', 'anima']);
   const updateArchExtras = () => {
     const archLabel = archStrip?.querySelector('.arch-pill.sel')?.textContent?.trim() ?? '';
     const arch = ARCH_MAP[archLabel] ?? 'sdxl';
     const animaExtras = document.getElementById('anima-extras');
     if (animaExtras) animaExtras.style.display = arch === 'anima' ? 'block' : 'none';
+    const ditRow = document.getElementById('dit-weighting-row');
+    if (ditRow) ditRow.style.display = _DIT_ARCHS.has(arch) ? '' : 'none';
   };
   archStrip?.querySelectorAll('.arch-pill').forEach((pill) => {
     pill.addEventListener('click', () => {
@@ -689,6 +701,17 @@ async function mountTrain() {
   });
   updateArchExtras();
 
+  // Weighting scheme conditional params
+  const updateWeightingParams = () => {
+    const active = document.getElementById('weighting-scheme-btns')?.querySelector('.btn.primary')?.textContent?.trim() ?? '';
+    const logitParams = document.getElementById('logit-normal-params');
+    const modeParam = document.getElementById('mode-scale-param');
+    if (logitParams) logitParams.style.display = active === 'logit_normal' ? '' : 'none';
+    if (modeParam) modeParam.style.display = active === 'mode' ? '' : 'none';
+  };
+  document.getElementById('weighting-scheme-btns')?.addEventListener('click', () => requestAnimationFrame(updateWeightingParams));
+  updateWeightingParams();
+
   // Mode cards
   form.querySelectorAll('.mode-card').forEach((card) => {
     card.addEventListener('click', () => {
@@ -699,8 +722,9 @@ async function mountTrain() {
     });
   });
 
-  // All btn groups (optimizer, scheduler, etc.)
+  // All btn groups (optimizer, scheduler, etc.) — skip multi-select groups
   form.querySelectorAll('.row-flex').forEach((group) => {
+    if (group.dataset.multiselect) return;
     group.addEventListener('click', (e) => {
       const btn = e.target.closest('.btn');
       if (!btn || !group.contains(btn)) return;
@@ -712,6 +736,19 @@ async function mountTrain() {
         updateSummary();
       }
     });
+  });
+
+  // Multi-select resolution preset buttons
+  const resBtns = document.getElementById('resolution-btns');
+  resBtns?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn');
+    if (!btn || btn.id === 'custom-res-btn') return;
+    btn.classList.toggle('primary');
+    // Guard: at least one preset must remain active
+    const anyActive = [...resBtns.querySelectorAll('.btn:not(#custom-res-btn)')].some((b) => b.classList.contains('primary'));
+    if (!anyActive) btn.classList.add('primary');
+    refreshCliPreview();
+    updateSummary();
   });
 
   // Any input/checkbox/select change
@@ -851,11 +888,7 @@ async function mountTrain() {
     if (!inp) return;
     const visible = inp.style.display !== 'none';
     inp.style.display = visible ? 'none' : '';
-    // Deselect preset buttons when custom is shown
-    if (!visible) {
-      document.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)').forEach((b) => b.classList.remove('primary'));
-      document.getElementById('custom-res-btn').classList.add('primary');
-    }
+    document.getElementById('custom-res-btn')?.classList.toggle('primary', !visible);
     refreshCliPreview();
   });
   document.getElementById('custom-res-w')?.addEventListener('input', refreshCliPreview);
@@ -1036,29 +1069,37 @@ function _applyConfigToForm(cfg) {
     if (vaeInp) vaeInp.value = cfg.vae || '';
   }
 
-  // Resolution buttons — try preset first, fall back to custom inputs
-  if (cfg.resolution) {
-    const [w, h] = cfg.resolution.split(',');
-    const presetMatch = ['512', '768', '1024'].includes(w) && w === h;
-    if (presetMatch) {
-      setActiveBtn('#resolution-btns', w);
-      const customDiv = document.getElementById('custom-res-inputs');
-      if (customDiv) customDiv.style.display = 'none';
-    } else {
-      // Custom resolution
-      ['512', '768', '1024'].forEach((v) => {
-        const btns = form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)');
-        btns.forEach((b) => b.classList.remove('primary'));
+  // Resolution buttons — restore multi-select state from cfg.resolutions
+  const resList = Array.isArray(cfg.resolutions) ? cfg.resolutions
+    : (cfg.resolution ? [cfg.resolution] : ['1024,1024']); // backward compat
+  const presetNums = new Set(['512', '768', '1024']);
+  // Deselect all presets first
+  form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)').forEach((b) => b.classList.remove('primary'));
+  document.getElementById('custom-res-inputs').style.display = 'none';
+  document.getElementById('custom-res-btn')?.classList.remove('primary');
+  let customSet = false;
+  for (const res of resList) {
+    const [w, h] = res.split(',');
+    if (presetNums.has(w) && w === h) {
+      // Activate matching preset button
+      form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)').forEach((b) => {
+        if (b.textContent.trim() === w) b.classList.add('primary');
       });
-      const customBtn = document.getElementById('custom-res-btn');
-      if (customBtn) customBtn.classList.add('primary');
+    } else if (!customSet) {
+      // First non-preset goes into custom inputs
       const customDiv = document.getElementById('custom-res-inputs');
       if (customDiv) customDiv.style.display = '';
+      document.getElementById('custom-res-btn')?.classList.add('primary');
       const wEl = document.getElementById('custom-res-w');
       const hEl = document.getElementById('custom-res-h');
       if (wEl) wEl.value = w ?? '';
       if (hEl) hEl.value = h ?? '';
+      customSet = true;
     }
+  }
+  // Ensure at least one preset is active if nothing was restored
+  if (![...form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)')].some((b) => b.classList.contains('primary')) && !customSet) {
+    form.querySelector('#resolution-btns .btn:not(#custom-res-btn)')?.classList.add('primary');
   }
 
   setCheckbox('enable_bucket', cfg.enable_bucket);
@@ -1079,6 +1120,8 @@ function _applyConfigToForm(cfg) {
   }
   setByLabel('network_dim', cfg.network_dim);
   setByLabel('network_alpha', cfg.network_alpha);
+  setCheckbox('target-unet', !cfg.network_train_text_encoder_only);
+  setCheckbox('target-te', !cfg.network_train_unet_only);
 
   // ── Schedule ──────────────────────────────────────────────────
   setActiveBtn('[data-pane="schedule"] .form-row:first-child .row-flex', cfg.optimizer_type);
@@ -1124,6 +1167,18 @@ function _applyConfigToForm(cfg) {
   const ssEl = document.getElementById('sample-steps');    if (ssEl && cfg.sample_steps !== undefined) ssEl.value = cfg.sample_steps;
   const slEl = document.getElementById('sample-guidance'); if (slEl && cfg.sample_guidance !== undefined) slEl.value = cfg.sample_guidance;
   const snEl = document.getElementById('sample-negative'); if (snEl && cfg.sample_negative !== undefined) snEl.value = cfg.sample_negative;
+
+  // ── DiT weighting scheme ──────────────────────────────────────
+  if (cfg.weighting_scheme) {
+    setActiveBtn('#weighting-scheme-btns', cfg.weighting_scheme);
+    const logitParams = document.getElementById('logit-normal-params');
+    const modeParam = document.getElementById('mode-scale-param');
+    if (logitParams) logitParams.style.display = cfg.weighting_scheme === 'logit_normal' ? '' : 'none';
+    if (modeParam) modeParam.style.display = cfg.weighting_scheme === 'mode' ? '' : 'none';
+  }
+  setByLabel('logit_mean', cfg.logit_mean);
+  setByLabel('logit_std', cfg.logit_std);
+  setByLabel('mode_scale', cfg.mode_scale);
 
   // ── Advanced ──────────────────────────────────────────────────
   setByLabel('min_snr_gamma', cfg.min_snr_gamma);

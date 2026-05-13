@@ -1,6 +1,6 @@
 from __future__ import annotations
-from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from typing import List, Literal, Optional
+from pydantic import BaseModel, Field, model_validator
 
 
 class TrainingConfig(BaseModel):
@@ -24,7 +24,8 @@ class TrainingConfig(BaseModel):
 
     # ── Dataset ─────────────────────────────────────────────────────────────
     train_data_dir: str = ""
-    resolution: str = "1024,1024"
+    resolutions: List[str] = ["1024,1024"]
+    dataset_config: Optional[str] = None  # internal: path to generated TOML for multi-resolution
     enable_bucket: bool = True
     bucket_no_upscale: bool = True
     min_bucket_reso: int = 256
@@ -87,6 +88,9 @@ class TrainingConfig(BaseModel):
 
     # ── DiT-specific (FLUX / SD3 / Lumina / HunyuanImage / Anima) ───────────
     weighting_scheme: str = "uniform"
+    logit_mean: float = 0.0
+    logit_std: float = 1.0
+    mode_scale: float = 1.29
     timestep_sampling: str = "sigma"
     guidance_scale: float = 3.5
     t5xxl_max_token_length: Optional[int] = None
@@ -147,6 +151,15 @@ class TrainingConfig(BaseModel):
     # ── Misc ─────────────────────────────────────────────────────────────────
     seed: Optional[int] = None
     training_comment: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_resolution(cls, data: dict) -> dict:
+        """Migrate old single-resolution jobs to the new resolutions list."""
+        if isinstance(data, dict) and "resolution" in data and "resolutions" not in data:
+            data = dict(data)
+            data["resolutions"] = [data.pop("resolution")]
+        return data
 
 
 class JobCreate(BaseModel):

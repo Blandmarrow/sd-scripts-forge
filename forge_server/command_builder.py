@@ -92,17 +92,21 @@ def build(cfg: "TrainingConfig", settings: "ForgeSettings") -> list[str]:
     args += ["--output_name", cfg.output_name]
 
     # ── Dataset ───────────────────────────────────────────────────────────────
-    if cfg.train_data_dir:
-        args += ["--train_data_dir", cfg.train_data_dir]
+    if cfg.dataset_config:
+        # Multi-resolution path: pre-generated TOML carries train_data_dir + per-dataset resolution
+        args += ["--dataset_config", cfg.dataset_config]
+    else:
+        if cfg.train_data_dir:
+            args += ["--train_data_dir", cfg.train_data_dir]
+        resolution = cfg.resolutions[0] if cfg.resolutions else "1024,1024"
+        args += ["--resolution", resolution]
 
-    args += ["--resolution", cfg.resolution]
-
-    if cfg.enable_bucket:
-        args.append("--enable_bucket")
-        if cfg.bucket_no_upscale:
-            args.append("--bucket_no_upscale")
-        args += ["--min_bucket_reso", str(cfg.min_bucket_reso)]
-        args += ["--max_bucket_reso", str(cfg.max_bucket_reso)]
+        if cfg.enable_bucket:
+            args.append("--enable_bucket")
+            if cfg.bucket_no_upscale:
+                args.append("--bucket_no_upscale")
+            args += ["--min_bucket_reso", str(cfg.min_bucket_reso)]
+            args += ["--max_bucket_reso", str(cfg.max_bucket_reso)]
 
     if cfg.caption_extension and cfg.caption_extension != ".txt":
         args += ["--caption_extension", cfg.caption_extension]
@@ -230,6 +234,10 @@ def build(cfg: "TrainingConfig", settings: "ForgeSettings") -> list[str]:
     # ── DiT-specific ──────────────────────────────────────────────────────────
     if cfg.architecture in _DIT_ARCHS:
         args += ["--weighting_scheme", cfg.weighting_scheme]
+        if cfg.weighting_scheme == "logit_normal":
+            args += ["--logit_mean", str(cfg.logit_mean), "--logit_std", str(cfg.logit_std)]
+        elif cfg.weighting_scheme == "mode":
+            args += ["--mode_scale", str(cfg.mode_scale)]
 
         if cfg.architecture == "flux":
             args += ["--timestep_sampling", cfg.timestep_sampling]
