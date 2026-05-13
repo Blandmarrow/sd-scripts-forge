@@ -57,10 +57,11 @@ def _build_dataset_toml(cfg) -> str:
             lines.append(f"  max_bucket_reso = {cfg.max_bucket_reso}")
         lines.append("")
         for subset in subsets:
+            image_dir = Path(subset["image_dir"]).as_posix()
             lines.append("  [[datasets.subsets]]")
-            lines.append(f'    image_dir = "{subset["image_dir"]}"')
+            lines.append(f"    image_dir = '{image_dir}'")
             lines.append(f'    num_repeats = {subset["num_repeats"]}')
-            lines.append(f'    caption_extension = "{cfg.caption_extension}"')
+            lines.append(f"    caption_extension = '{cfg.caption_extension}'")
             if cfg.shuffle_caption:
                 lines.append("    shuffle_caption = true")
             if cfg.keep_tokens and cfg.keep_tokens > 0:
