@@ -331,8 +331,8 @@ function collectFormState() {
     })(),
     network_dim: parseInt(getByLabel('network_dim') || '32') || 32,
     network_alpha: parseFloat(getByLabel('network_alpha') || '16') || 16,
-    network_train_unet_only: getCheckbox('target-unet') && !getCheckbox('target-te'),
-    network_train_text_encoder_only: getCheckbox('target-te') && !getCheckbox('target-unet'),
+    network_train_unet_only: getCheckbox('train UNet') && !getCheckbox('train text encoder'),
+    network_train_text_encoder_only: getCheckbox('train text encoder') && !getCheckbox('train UNet'),
     optimizer_type: activeBtn('[data-pane="schedule"] .form-row:first-child .row-flex') || 'AdamW8bit',
     learning_rate: parseFloat(getByLabel('learning_rate') || '1e-4') || 1e-4,
     unet_lr: parseFloat(getByLabel('unet_lr')) || undefined,
@@ -1120,8 +1120,8 @@ function _applyConfigToForm(cfg) {
   }
   setByLabel('network_dim', cfg.network_dim);
   setByLabel('network_alpha', cfg.network_alpha);
-  setCheckbox('target-unet', !cfg.network_train_text_encoder_only);
-  setCheckbox('target-te', !cfg.network_train_unet_only);
+  setCheckbox('train UNet', !cfg.network_train_text_encoder_only);
+  setCheckbox('train text encoder', !cfg.network_train_unet_only);
 
   // ── Schedule ──────────────────────────────────────────────────
   setActiveBtn('[data-pane="schedule"] .form-row:first-child .row-flex', cfg.optimizer_type);
