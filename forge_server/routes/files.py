@@ -119,6 +119,29 @@ async def list_datasets():
     return {"datasets": items, "directory": _settings.datasets_dir}
 
 
+@router.get("/browse-folder")
+async def browse_folder():
+    """Open a native OS folder-picker dialog and return the chosen path."""
+    import subprocess, sys
+    script = (
+        "import tkinter as tk;"
+        "from tkinter import filedialog;"
+        "root = tk.Tk();"
+        "root.withdraw();"
+        "root.wm_attributes('-topmost', True);"
+        "path = filedialog.askdirectory();"
+        "print(path, end='')"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=120,
+        )
+        return {"path": result.stdout.strip()}
+    except Exception as exc:
+        return {"path": "", "error": str(exc)}
+
+
 @router.get("/loras")
 async def list_loras():
     items = _scan_checkpoints(_settings.output_dir)

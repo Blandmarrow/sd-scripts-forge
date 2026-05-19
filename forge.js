@@ -28,6 +28,7 @@ const api = {
   cancelJob:   (id) => api.post(`/api/jobs/${id}/cancel`, {}),
   models:      () => api.get('/api/models'),
   datasets:    () => api.get('/api/datasets'),
+  browseFolder:() => api.get('/api/browse-folder'),
   loras:       () => api.get('/api/loras'),
   systemStats: () => api.get('/api/system/stats'),
   settings:    () => api.get('/api/settings'),
@@ -303,11 +304,11 @@ function collectFormState() {
     const n = b.textContent.trim();
     return `${n},${n}`;
   });
-  const customResDiv = document.getElementById('custom-res-inputs');
-  const useCustomRes = customResDiv && customResDiv.style.display !== 'none';
-  const customW = document.getElementById('custom-res-w')?.value?.trim();
-  const customH = document.getElementById('custom-res-h')?.value?.trim();
-  if (useCustomRes && customW && customH) selectedPresets.push(`${customW},${customH}`);
+  document.querySelectorAll('#custom-res-list .custom-res-row').forEach((row) => {
+    const w = row.querySelector('.custom-res-w')?.value?.trim();
+    const h = row.querySelector('.custom-res-h')?.value?.trim();
+    if (w && h) selectedPresets.push(`${w},${h}`);
+  });
   const resolutions = selectedPresets.length ? selectedPresets : ['1024,1024'];
 
   return {
@@ -317,7 +318,11 @@ function collectFormState() {
     mode,
     checkpoint: form.querySelector('#ckpt-select')?.value ?? '',
     vae: vaeOverride ? vaeVal : undefined,
-    train_data_dir: document.getElementById('ds-select')?.value ?? '',
+    train_data_dir: (() => {
+      const sel = document.getElementById('ds-select');
+      if (sel?.value === '__custom__') return document.getElementById('ds-custom-path')?.value ?? '';
+      return sel?.value ?? '';
+    })(),
     resolutions,
     enable_bucket: checked('[name="enable_bucket"], input[type=checkbox][class=checkbox]:nth-of-type(1)'),
     bucket_no_upscale: true,
@@ -419,10 +424,41 @@ const refreshCliPreview = debounce(async () => {
     const cfg = collectFormState();
     const result = await api.cliPreview(cfg);
     renderCli(result.cli);
+    const note = document.getElementById('cli-multi-res-note');
+    if (note) note.style.display = (cfg.resolutions && cfg.resolutions.length > 1) ? '' : 'none';
   } catch (e) {
     console.warn('CLI preview failed:', e.message);
   }
 }, 400);
+
+function _updateCustomResBtn() {
+  const list = document.getElementById('custom-res-list');
+  document.getElementById('custom-res-btn')?.classList.toggle('primary', !!(list && list.children.length > 0));
+}
+
+function _addCustomResRow(w = '', h = '') {
+  const list = document.getElementById('custom-res-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'custom-res-row';
+  row.innerHTML =
+    `<input class="input mono custom-res-w" style="width:80px" placeholder="1280"/>` +
+    `<span style="margin:0 6px;color:var(--fg-dim)">×</span>` +
+    `<input class="input mono custom-res-h" style="width:80px" placeholder="960"/>` +
+    `<span style="margin-left:4px;margin-right:6px;font-size:11px;color:var(--fg-dim)">px</span>` +
+    `<button class="btn sm ghost remove-custom-res" title="Remove">✕</button>`;
+  row.querySelector('.custom-res-w').value = w;
+  row.querySelector('.custom-res-h').value = h;
+  row.querySelector('.remove-custom-res').addEventListener('click', () => {
+    row.remove();
+    _updateCustomResBtn();
+    refreshCliPreview();
+  });
+  row.querySelector('.custom-res-w').addEventListener('input', refreshCliPreview);
+  row.querySelector('.custom-res-h').addEventListener('input', refreshCliPreview);
+  list.appendChild(row);
+  _updateCustomResBtn();
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Tab controller (Train page)
@@ -795,22 +831,53 @@ async function mountTrain() {
           opt.textContent = `${ds.name}  (${ds.image_count} imgs)`;
           sel.appendChild(opt);
         });
-        sel.addEventListener('change', () => {
-          const ds = datasets.find((d) => d.path === sel.value);
-          const meta = document.getElementById('ds-meta');
-          if (meta) meta.textContent = ds
-            ? `${ds.image_count} images · ${ds.captioned ? 'captioned' : 'no captions'} · ${ds.path}`
-            : '';
-          refreshCliPreview();
-        });
       } else {
         const opt = document.createElement('option');
-        opt.value = '';
+        opt.disabled = true;
         opt.textContent = `No datasets found — add folders to ${directory}`;
         sel.appendChild(opt);
       }
+      // Always append separator + custom-path option
+      const sep = document.createElement('option');
+      sep.disabled = true;
+      sep.textContent = '─────────────────────';
+      sel.appendChild(sep);
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom path…';
+      sel.appendChild(customOpt);
+
+      sel.addEventListener('change', () => {
+        const isCustom = sel.value === '__custom__';
+        const customRow = document.getElementById('ds-custom-row');
+        if (customRow) customRow.style.display = isCustom ? '' : 'none';
+        const meta = document.getElementById('ds-meta');
+        if (meta) {
+          if (!isCustom) {
+            const ds = datasets.find((d) => d.path === sel.value);
+            meta.textContent = ds
+              ? `${ds.image_count} images · ${ds.captioned ? 'captioned' : 'no captions'} · ${ds.path}`
+              : '';
+          } else {
+            meta.textContent = '';
+          }
+        }
+        refreshCliPreview();
+      });
     }
   } catch {}
+
+  // ── Custom dataset path: browse button + live preview ─────────
+  document.getElementById('ds-browse-btn')?.addEventListener('click', async () => {
+    try {
+      const { path } = await api.browseFolder();
+      if (path) {
+        const inp = document.getElementById('ds-custom-path');
+        if (inp) { inp.value = path; refreshCliPreview(); }
+      }
+    } catch { toast('Could not open folder browser', 'warn'); }
+  });
+  document.getElementById('ds-custom-path')?.addEventListener('input', refreshCliPreview);
 
   // ── VAE override checkbox ─────────────────────────────────────
   const vaeChk = form.querySelector('[name="use_vae_override"]');
@@ -884,15 +951,9 @@ async function mountTrain() {
   // ── Custom resolution ─────────────────────────────────────────
   document.getElementById('custom-res-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const inp = document.getElementById('custom-res-inputs');
-    if (!inp) return;
-    const visible = inp.style.display !== 'none';
-    inp.style.display = visible ? 'none' : '';
-    document.getElementById('custom-res-btn')?.classList.toggle('primary', !visible);
+    _addCustomResRow();
     refreshCliPreview();
   });
-  document.getElementById('custom-res-w')?.addEventListener('input', refreshCliPreview);
-  document.getElementById('custom-res-h')?.addEventListener('input', refreshCliPreview);
 
   // ── Summary panel ─────────────────────────────────────────────
   updateSummary();
@@ -1042,7 +1103,7 @@ function _applyConfigToForm(cfg) {
   const archLabel = Object.entries(ARCH_MAP).find(([, v]) => v === cfg.architecture)?.[0];
   if (archLabel) {
     form.querySelectorAll('.arch-pill').forEach((p) => {
-      p.classList.toggle('sel', p.textContent.trim() === archLabel);
+      if (p.textContent.trim() === archLabel) p.click();
     });
   }
 
@@ -1058,7 +1119,17 @@ function _applyConfigToForm(cfg) {
   if (ckpt && cfg.checkpoint) ckpt.value = cfg.checkpoint;
 
   const ds = document.getElementById('ds-select');
-  if (ds && cfg.train_data_dir) ds.value = cfg.train_data_dir;
+  if (ds && cfg.train_data_dir) {
+    ds.value = cfg.train_data_dir;
+    if (ds.value !== cfg.train_data_dir) {
+      // Path not in dropdown — restore as custom
+      ds.value = '__custom__';
+      const customPath = document.getElementById('ds-custom-path');
+      const customRow = document.getElementById('ds-custom-row');
+      if (customPath) customPath.value = cfg.train_data_dir;
+      if (customRow) customRow.style.display = '';
+    }
+  }
 
   // VAE override — dispatch change so the mountTrain listener updates disabled state
   const vaeChk = document.querySelector('[name="use_vae_override"]');
@@ -1073,32 +1144,24 @@ function _applyConfigToForm(cfg) {
   const resList = Array.isArray(cfg.resolutions) ? cfg.resolutions
     : (cfg.resolution ? [cfg.resolution] : ['1024,1024']); // backward compat
   const presetNums = new Set(['512', '768', '1024']);
-  // Deselect all presets first
+  // Deselect all presets and clear custom rows
   form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)').forEach((b) => b.classList.remove('primary'));
-  document.getElementById('custom-res-inputs').style.display = 'none';
+  const customResList = document.getElementById('custom-res-list');
+  if (customResList) customResList.innerHTML = '';
   document.getElementById('custom-res-btn')?.classList.remove('primary');
-  let customSet = false;
   for (const res of resList) {
     const [w, h] = res.split(',');
     if (presetNums.has(w) && w === h) {
-      // Activate matching preset button
       form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)').forEach((b) => {
         if (b.textContent.trim() === w) b.classList.add('primary');
       });
-    } else if (!customSet) {
-      // First non-preset goes into custom inputs
-      const customDiv = document.getElementById('custom-res-inputs');
-      if (customDiv) customDiv.style.display = '';
-      document.getElementById('custom-res-btn')?.classList.add('primary');
-      const wEl = document.getElementById('custom-res-w');
-      const hEl = document.getElementById('custom-res-h');
-      if (wEl) wEl.value = w ?? '';
-      if (hEl) hEl.value = h ?? '';
-      customSet = true;
+    } else {
+      _addCustomResRow(w ?? '', h ?? '');
     }
   }
   // Ensure at least one preset is active if nothing was restored
-  if (![...form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)')].some((b) => b.classList.contains('primary')) && !customSet) {
+  if (![...form.querySelectorAll('#resolution-btns .btn:not(#custom-res-btn)')].some((b) => b.classList.contains('primary'))
+      && (!customResList || customResList.children.length === 0)) {
     form.querySelector('#resolution-btns .btn:not(#custom-res-btn)')?.classList.add('primary');
   }
 

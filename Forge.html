@@ -336,6 +336,12 @@
                 <option value="">— select dataset —</option>
               </select>
               <div class="mono" id="ds-meta" style="font-size:11px; color:var(--fg-dim); margin-top:6px;"></div>
+              <div id="ds-custom-row" style="display:none; margin-top:8px;">
+                <div class="row-flex" style="gap:8px; align-items:center;">
+                  <input type="text" class="input mono" id="ds-custom-path" placeholder="Paste or type a folder path…" style="flex:1; max-width:390px;" />
+                  <button class="btn sm ghost" id="ds-browse-btn">Browse…</button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -365,12 +371,7 @@
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked/> <span>enable_bucket</span></label>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked/> <span>bucket_no_upscale</span></label>
               </div>
-              <div id="custom-res-inputs" style="display:none; margin-top:8px; display:none;">
-                <input id="custom-res-w" class="input mono" style="width:80px" placeholder="1280"/>
-                <span style="margin:0 6px;color:var(--fg-dim)">×</span>
-                <input id="custom-res-h" class="input mono" style="width:80px" placeholder="960"/>
-                <span style="margin-left:6px;font-size:11px;color:var(--fg-dim)">px (multiple of 64)</span>
-              </div>
+              <div id="custom-res-list"></div>
               <div class="bucket-strip" id="bucket-strip"></div>
             </div>
           </div>
@@ -740,6 +741,9 @@
             <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3.5" y="3.5" width="8" height="9" rx="1"/><path d="M5.5 3.5V2.5h7v9h-1"/></svg>
             Copy
           </button>
+        </div>
+        <div id="cli-multi-res-note" class="info-banner" style="display:none;">
+          Multi-resolution training is active. This preview shows only the first resolution with <code>--resolution</code>; the actual launch generates a <code>dataset_config.toml</code> and uses <code>--dataset_config</code> instead.
         </div>
         <div class="panel-b" style="padding: 0;">
 <pre class="cli mono" id="cli">
