@@ -1,7 +1,9 @@
 """File system scanning: models, datasets, LoRAs."""
 from __future__ import annotations
+import asyncio
 import os
 import re
+import time as _time
 from pathlib import Path
 from fastapi import APIRouter
 
@@ -10,6 +12,10 @@ _REPEAT_RE = re.compile(r'^\d+_')
 router = APIRouter(prefix="/api")
 
 _settings = None
+
+_datasets_cache: list | None = None
+_datasets_cache_at: float = 0.0
+_DATASETS_CACHE_TTL = 30.0
 
 
 def init(settings):
@@ -115,8 +121,13 @@ async def list_models():
 
 @router.get("/datasets")
 async def list_datasets():
-    items = _scan_datasets(_settings.datasets_dir)
-    return {"datasets": items, "directory": _settings.datasets_dir}
+    global _datasets_cache, _datasets_cache_at
+    now = _time.monotonic()
+    if _datasets_cache is None or (now - _datasets_cache_at) > _DATASETS_CACHE_TTL:
+        loop = asyncio.get_event_loop()
+        _datasets_cache = await loop.run_in_executor(None, _scan_datasets, _settings.datasets_dir)
+        _datasets_cache_at = now
+    return {"datasets": _datasets_cache, "directory": _settings.datasets_dir}
 
 
 @router.get("/browse-folder")

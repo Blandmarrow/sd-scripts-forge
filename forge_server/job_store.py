@@ -83,6 +83,7 @@ class JobStore:
                 throughput=jd.get("throughput"),
                 return_code=jd.get("return_code"),
                 loss_history=jd.get("loss_history", []),
+                log_buffer=jd.get("log_buffer", []),
             )
             # Mark anything mid-run as interrupted
             if j.status in ("running", "starting"):
@@ -108,6 +109,7 @@ class JobStore:
                     "throughput": j.throughput,
                     "return_code": j.return_code,
                     "loss_history": j.loss_history[-500:],  # keep last 500 points
+                    "log_buffer": j.log_buffer[-500:],
                 }
                 for j in self._jobs.values()
             ],

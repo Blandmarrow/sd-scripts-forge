@@ -368,7 +368,7 @@
                 <button class="btn sm primary">1024</button>
                 <button class="btn sm" id="custom-res-btn">Custom…</button>
                 <span style="color:var(--fg-soft)">·</span>
-                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked/> <span>enable_bucket</span></label>
+                <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" name="enable_bucket" checked/> <span>enable_bucket</span></label>
                 <label class="row-flex" style="gap:6px"><input type="checkbox" class="checkbox" checked/> <span>bucket_no_upscale</span></label>
               </div>
               <div id="custom-res-list"></div>
@@ -559,8 +559,8 @@
             <div class="form-row">
               <div class="lbl-col"><h4>Sample every</h4><p>Generate preview images at this interval. Set both 0 to disable.</p></div>
               <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; max-width: 360px;">
-                <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">every_n_steps</span><input class="input mono" value="500" /></label>
-                <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">every_n_epochs</span><input class="input mono" value="1" /></label>
+                <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">sample_every_n_steps</span><input class="input mono" value="500" /></label>
+                <label class="kv" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:var(--fg-dim); letter-spacing:.03em; text-transform:uppercase;">sample_every_n_epochs</span><input class="input mono" value="1" /></label>
               </div>
             </div>
 

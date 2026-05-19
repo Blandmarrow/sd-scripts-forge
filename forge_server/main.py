@@ -12,6 +12,7 @@ from .config import settings
 from .job_store import JobStore
 from .job_runner import JobRunner
 from .routes import jobs, cli, files, system, settings_route, ws, utilities
+from .routes.utilities import stop_tensorboard
 
 _ROOT = Path(__file__).parent.parent
 
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
     # ── Shutdown ─────────────────────────────────────────────────────────────
     runner_task.cancel()
     stats_task.cancel()
+    stop_tensorboard()
 
 
 async def _stats_loop():

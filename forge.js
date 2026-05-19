@@ -324,7 +324,7 @@ function collectFormState() {
       return sel?.value ?? '';
     })(),
     resolutions,
-    enable_bucket: checked('[name="enable_bucket"], input[type=checkbox][class=checkbox]:nth-of-type(1)'),
+    enable_bucket: checked('[name="enable_bucket"]'),
     bucket_no_upscale: true,
     shuffle_caption: checked('[name="shuffle_caption"]'),
     network_module: (() => {
@@ -378,8 +378,8 @@ function collectFormState() {
       const sn = document.getElementById('sample-negative')?.value?.trim() || '';
       const suffix = [sw && `--w ${sw}`, sh && `--h ${sh}`, ss && `--s ${ss}`, sl && `--l ${sl}`, sn && `--n ${sn}`].filter(Boolean).join(' ');
       return {
-        sample_every_n_steps: parseInt(getByLabel('every_n_steps') || '') || undefined,
-        sample_every_n_epochs: parseInt(getByLabel('every_n_epochs') || '') || undefined,
+        sample_every_n_steps: parseInt(getByLabel('sample_every_n_steps') || '') || undefined,
+        sample_every_n_epochs: parseInt(getByLabel('sample_every_n_epochs') || '') || undefined,
         sample_sampler: activeBtn('[data-pane="sampling"] .form-row:nth-child(2) .row-flex') || 'euler_a',
         sample_prompts_text: sampleRaw.split('\n').map(l => l.trim()).filter(Boolean).map(l => suffix ? `${l} ${suffix}` : l).join('\n'),
         sample_prompts_raw: sampleRaw,
@@ -525,10 +525,17 @@ function fmtDuration(secs) {
   return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
 }
 
-function fmtStep(step, totalSteps) {
+function fmtStep(step, totalSteps, maxEpochs = 0) {
   step = step || 0;
   totalSteps = totalSteps || 0;
-  return totalSteps ? `${step.toLocaleString()} / ${totalSteps.toLocaleString()}` : `${step.toLocaleString()}`;
+  const stepStr = totalSteps
+    ? `${step.toLocaleString()} / ${totalSteps.toLocaleString()}`
+    : step.toLocaleString();
+  if (maxEpochs > 0 && totalSteps > 0) {
+    const epoch = Math.min(Math.floor(step / (totalSteps / maxEpochs)) + 1, maxEpochs);
+    return `${stepStr} (epoch ${epoch} / ${maxEpochs})`;
+  }
+  return stepStr;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1018,9 +1025,9 @@ function _showPresetPopover(anchorBtn) {
       loadBtn.style.flex = '1';
       loadBtn.addEventListener('click', () => {
         _pendingEdit = presets[name];
-        mountTrain();
         pop.remove();
         toast(`Preset "${name}" loaded`, 'success');
+        router.navigate('train');
       });
       const delBtn = document.createElement('button');
       delBtn.className = 'btn ghost sm danger';
@@ -1217,8 +1224,8 @@ function _applyConfigToForm(cfg) {
   setByLabel('vae_batch_size', cfg.vae_batch_size);
 
   // ── Sampling ──────────────────────────────────────────────────
-  setByLabel('every_n_steps', cfg.sample_every_n_steps);
-  setByLabel('every_n_epochs', cfg.sample_every_n_epochs);
+  setByLabel('sample_every_n_steps', cfg.sample_every_n_steps);
+  setByLabel('sample_every_n_epochs', cfg.sample_every_n_epochs);
   setActiveBtn('[data-pane="sampling"] .form-row:nth-child(2) .row-flex', cfg.sample_sampler);
   setByLabel('save_every_n_steps', cfg.save_every_n_steps);
   setByLabel('save_every_n_epochs', cfg.save_every_n_epochs);
@@ -1255,7 +1262,8 @@ async function startTraining() {
   try {
     const cfg = collectFormState();
     if (!cfg.checkpoint) { toast('Select a base model first', 'warn'); return; }
-    if (!cfg.train_data_dir && !cfg.output_name) { toast('Set output name and dataset', 'warn'); return; }
+    if (!cfg.train_data_dir) { toast('Select a dataset first', 'warn'); return; }
+    if (!cfg.output_name) { toast('Set an output name first', 'warn'); return; }
     const result = await api.startJob(cfg);
     toast(`Job ${result.job_id} queued`, 'success');
     router.navigate('jobs');
@@ -1310,16 +1318,16 @@ async function renderJobs() {
     // Wire jobs-page Stop button
     const jobsStopBtn = document.getElementById('jobs-stop-btn');
     if (jobsStopBtn) {
-      jobsStopBtn.onclick = null;
       if (active_job_id) {
         jobsStopBtn.disabled = false;
-        jobsStopBtn.addEventListener('click', async () => {
+        jobsStopBtn.onclick = async () => {
           await api.cancelJob(active_job_id);
           toast('Training stopped', 'success');
           await renderJobs();
-        });
+        };
       } else {
         jobsStopBtn.disabled = true;
+        jobsStopBtn.onclick = null;
       }
     }
 
@@ -1669,9 +1677,15 @@ async function mountModels() {
           <div class="model-card-name">${esc(m.name)}</div>
           <div class="model-card-meta mono">${esc(m.arch?.toUpperCase())} · ${m.size_human}</div>
           <div class="model-card-actions">
-            <button class="btn sm" onclick="router.navigate('train')">Use for training</button>
+            <button class="btn sm" data-checkpoint="${esc(m.path)}">Use for training</button>
           </div>
         </div>`).join('');
+      container.querySelectorAll('[data-checkpoint]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          _pendingEdit = { checkpoint: btn.dataset.checkpoint };
+          router.navigate('train');
+        });
+      });
     }
 
     // Populate filter pill counts

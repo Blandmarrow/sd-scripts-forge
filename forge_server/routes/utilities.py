@@ -69,6 +69,16 @@ async def start_tensorboard(body: TensorboardRequest):
     return {"url": f"http://localhost:{port}", "status": "started"}
 
 
+def stop_tensorboard():
+    global _tensorboard_proc
+    if _tensorboard_proc is not None:
+        try:
+            _tensorboard_proc.terminate()
+        except Exception:
+            pass
+        _tensorboard_proc = None
+
+
 @router.post("/run")
 async def run_utility(body: UtilityRequest):
     if body.tool not in TOOL_MAP:
