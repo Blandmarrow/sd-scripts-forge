@@ -115,6 +115,7 @@ class JobStore:
             ],
             "queue": self._queue,
         }
+        self.jobs_file.parent.mkdir(parents=True, exist_ok=True)
         self.jobs_file.write_text(json.dumps(data, indent=2))
 
     # ── Public API ────────────────────────────────────────────────────────────

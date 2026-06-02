@@ -1,5 +1,7 @@
 logs
 __pycache__
+forge_config.json
+forge_jobs.json
 wd14_tagger_model
 venv
 *.egg-info
