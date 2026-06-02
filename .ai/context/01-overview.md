@@ -64,7 +64,7 @@ python forge.py --port 8080 --reload  # custom port, dev auto-reload
 
 No frontend rebuild is ever needed — the SPA is plain JS/CSS with no build step. Changes to `forge.js` or `forge.css` take effect on the next browser refresh. Python/server changes require a restart (or run with `--reload` during development).
 
-Server config is in `forge_config.json` (created automatically on first run).
+Server config is in `forge_config.json` (created automatically on first run, gitignored — never commit it).
 
 ### Training Commands Pattern
 All training scripts follow this general pattern:
@@ -111,7 +111,8 @@ The web UI is a FastAPI server (`forge_server/`) that wraps the CLI training scr
   - `utilities.py` — `/api/utilities/run` (one-shot subprocess runner for merge/resize/extract scripts); `/api/utilities/tools` lists available tools; `/api/utilities/tensorboard/start` launches TensorBoard as a subprocess. `stop_tensorboard()` is called by the lifespan shutdown hook — do not remove that call or the TensorBoard process will outlive the server.
   - `ws.py` — WebSocket `/ws` with `ConnectionManager`; broadcasts `queue_update`, `system_stats` (GPU/disk, ~2 s interval), `job_status` (step/loss/lr/throughput/total_steps, throttled to 0.5 s during training), and `log_line` (individual log lines, tqdm progress lines excluded)
 - **`forge.css`** / **`forge.js`**: SPA frontend (no build step, vanilla JS + custom CSS)
-- **`forge_config.json`**: User-editable server config (`sd_scripts_root`, `python_executable`, `models_dir`, `datasets_dir`, `output_dir`, `server_host`, `server_port`, `cpu_threads`, `default_mixed_precision`)
+- **`forge_config.json`**: User-editable server config (`sd_scripts_root`, `python_executable`, `models_dir`, `datasets_dir`, `output_dir`, `server_host`, `server_port`, `cpu_threads`, `default_mixed_precision`). Gitignored — auto-generated from `_ROOT`-relative defaults on first run; never commit this file.
+- **`forge_jobs.json`**: Persisted job history and queue state. Gitignored — machine-local, recreated automatically.
 
 ### Adding a New Model to the Web UI
 When a new model family is added to sd-scripts, also update:
